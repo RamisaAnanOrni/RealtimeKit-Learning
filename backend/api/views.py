@@ -76,9 +76,29 @@ def create_meeting(request):
 
     farmer = farmer_response.json()
 
-    # ==========================
-    # Create Vet Participant
-    # ==========================
+    farmer_token = farmer.get("data", {}).get("token")
+
+    return Response({
+        "meeting_id": meeting_id,
+        "farmer_token": farmer_token,
+    })
+
+
+# ---------------------------------------
+# Join Meeting (Vet)
+# ---------------------------------------
+@api_view(["POST"])
+def join_meeting(request):
+    meeting_id = request.data.get("meeting_id")
+
+    if not meeting_id:
+        return Response({"success": False, "error": "meeting_id is required"}, status=400)
+
+    headers = {
+        "Authorization": settings.DYTE_AUTH_HEADER,
+        "Content-Type": "application/json"
+    }
+
     vet_response = requests.post(
         f"{BASE_URL}/meetings/{meeting_id}/participants",
         headers=headers,
@@ -89,14 +109,16 @@ def create_meeting(request):
         }
     )
 
-    print("\n========== CREATE VET ==========")
+    print("\n========== JOIN MEETING (VET) ==========")
     print("Status Code:", vet_response.status_code)
     print("Response:", vet_response.text)
 
     vet = vet_response.json()
 
+    if vet_response.status_code not in [200, 201]:
+        return Response({"success": False, "error": vet}, status=vet_response.status_code)
+
     return Response({
-        "meeting": meeting,
-        "farmer": farmer,
-        "vet": vet
+        "meeting_id": meeting_id,
+        "vet_token": vet["data"]["token"],
     })
