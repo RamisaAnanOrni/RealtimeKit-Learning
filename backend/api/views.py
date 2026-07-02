@@ -113,7 +113,7 @@ def create_meeting(request):
     # STEP 4 - Build Join Links
     # ---------------------------------------------
 
-    frontend_url = "http://localhost:3000"
+    frontend_url = "https://vetbackend.insurecow.com"
 
     farmer_join_url = (
         f"{frontend_url}/farmer"
