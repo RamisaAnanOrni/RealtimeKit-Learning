@@ -8,9 +8,10 @@ from rest_framework.response import Response
 BASE_URL = "https://api.realtime.cloudflare.com/v2"
 
 
-# ---------------------------------------
+# --------------------------------------------------
 # Health Check
-# ---------------------------------------
+# --------------------------------------------------
+
 @api_view(["GET"])
 def health_check(request):
     return Response({
@@ -19,20 +20,22 @@ def health_check(request):
     })
 
 
-# ---------------------------------------
+# --------------------------------------------------
 # Create Meeting
-# ---------------------------------------
+# --------------------------------------------------
+
 @api_view(["POST"])
 def create_meeting(request):
 
     headers = {
         "Authorization": settings.DYTE_AUTH_HEADER,
-        "Content-Type": "application/json"
+        "Content-Type": "application/json",
     }
 
-    # ==========================
-    # Create Meeting
-    # ==========================
+    # ---------------------------------------------
+    # STEP 1 - Create Meeting
+    # ---------------------------------------------
+
     meeting_response = requests.post(
         f"{BASE_URL}/meetings",
         headers=headers,
@@ -42,24 +45,22 @@ def create_meeting(request):
     )
 
     print("\n========== CREATE MEETING ==========")
-    print("Status Code:", meeting_response.status_code)
-    print("Response:", meeting_response.text)
+    print(meeting_response.status_code)
+    print(meeting_response.text)
+
+    if meeting_response.status_code not in [200, 201]:
+        return Response(
+            meeting_response.json(),
+            status=meeting_response.status_code,
+        )
 
     meeting = meeting_response.json()
-
-    # Stop here if meeting creation failed
-    if meeting_response.status_code not in [200, 201]:
-        return Response({
-            "success": False,
-            "step": "create_meeting",
-            "response": meeting
-        })
-
     meeting_id = meeting["data"]["id"]
 
-    # ==========================
-    # Create Farmer Participant
-    # ==========================
+    # ---------------------------------------------
+    # STEP 2 - Create Farmer
+    # ---------------------------------------------
+
     farmer_response = requests.post(
         f"{BASE_URL}/meetings/{meeting_id}/participants",
         headers=headers,
@@ -71,14 +72,21 @@ def create_meeting(request):
     )
 
     print("\n========== CREATE FARMER ==========")
-    print("Status Code:", farmer_response.status_code)
-    print("Response:", farmer_response.text)
+    print(farmer_response.status_code)
+    print(farmer_response.text)
+
+    if farmer_response.status_code not in [200, 201]:
+        return Response(
+            farmer_response.json(),
+            status=farmer_response.status_code,
+        )
 
     farmer = farmer_response.json()
 
-    # ==========================
-    # Create Vet Participant
-    # ==========================
+    # ---------------------------------------------
+    # STEP 3 - Create Vet
+    # ---------------------------------------------
+
     vet_response = requests.post(
         f"{BASE_URL}/meetings/{meeting_id}/participants",
         headers=headers,
@@ -90,13 +98,54 @@ def create_meeting(request):
     )
 
     print("\n========== CREATE VET ==========")
-    print("Status Code:", vet_response.status_code)
-    print("Response:", vet_response.text)
+    print(vet_response.status_code)
+    print(vet_response.text)
+
+    if vet_response.status_code not in [200, 201]:
+        return Response(
+            vet_response.json(),
+            status=vet_response.status_code,
+        )
 
     vet = vet_response.json()
 
+    # ---------------------------------------------
+    # STEP 4 - Build Join Links
+    # ---------------------------------------------
+
+    frontend_url = "http://localhost:3000"
+
+    farmer_join_url = (
+        f"{frontend_url}/farmer"
+        f"?token={farmer['data']['token']}"
+    )
+
+    vet_join_url = (
+        f"{frontend_url}/vet"
+        f"?token={vet['data']['token']}"
+    )
+
+    # ---------------------------------------------
+    # STEP 5 - Return Response
+    # ---------------------------------------------
+
     return Response({
-        "meeting": meeting,
-        "farmer": farmer,
-        "vet": vet
+        "success": True,
+
+        "meeting": {
+            "id": meeting_id,
+            "title": meeting["data"]["title"],
+        },
+
+        "farmer": {
+            "id": farmer["data"]["id"],
+            "name": farmer["data"]["name"],
+            "join_url": farmer_join_url,
+        },
+
+        "vet": {
+            "id": vet["data"]["id"],
+            "name": vet["data"]["name"],
+            "join_url": vet_join_url,
+        },
     })
