@@ -1,8 +1,20 @@
 from django.urls import path
-from .views import health_check, create_meeting, join_meeting
+
+from .views import (
+    health_check,
+    create_meeting,
+)
 
 urlpatterns = [
-    path("health/", health_check),
-    path("create-meeting/", create_meeting),
-    path("join-meeting/", join_meeting),
+    path(
+        "health/",
+        health_check,
+        name="health-check",
+    ),
+
+    path(
+        "create-meeting/",
+        create_meeting,
+        name="create-meeting",
+    ),
 ]
