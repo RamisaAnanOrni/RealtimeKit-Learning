@@ -12,10 +12,12 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 from decouple import config
 from pathlib import Path
 
-DYTE_BASE_URL = config("DYTE_BASE_URL")
-DYTE_ORG_ID = config("DYTE_ORG_ID")
-DYTE_API_KEY = config("DYTE_API_KEY")
-DYTE_AUTH_HEADER = config("DYTE_AUTH_HEADER")
+from decouple import config
+
+CLOUDFLARE_BASE_URL = config("CLOUDFLARE_BASE_URL")
+CLOUDFLARE_ACCOUNT_ID = config("CLOUDFLARE_ACCOUNT_ID")
+CLOUDFLARE_APP_ID = config("CLOUDFLARE_APP_ID")
+CLOUDFLARE_API_TOKEN = config("CLOUDFLARE_API_TOKEN")
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
