@@ -7,6 +7,13 @@ from django.conf import settings
 class CloudflareRealtimeKit:
 
     def __init__(self):
+        print("\n========== CLOUDFLARE SETTINGS ==========")
+        print("BASE URL:", settings.CLOUDFLARE_BASE_URL)
+        print("ACCOUNT:", settings.CLOUDFLARE_ACCOUNT_ID)
+        print("APP:", settings.CLOUDFLARE_APP_ID)
+        print("TOKEN:", settings.CLOUDFLARE_API_TOKEN[:15] + "...")
+        print("=========================================\n")
+
         self.base_url = (
             f"{settings.CLOUDFLARE_BASE_URL}"
             f"/accounts/{settings.CLOUDFLARE_ACCOUNT_ID}"
@@ -18,20 +25,16 @@ class CloudflareRealtimeKit:
             "Content-Type": "application/json",
         }
 
-    # -----------------------------------------
-    # Create Meeting
-    # -----------------------------------------
 
-        # -----------------------------------------
     # Create Meeting
-    # -----------------------------------------
+    
 
     def create_meeting(self):
 
         response = requests.post(
             f"{self.base_url}/meetings",
             headers=self.headers,
-            json={}
+            json={"title": "Vet Consultation"}
         )
 
         if not response.ok:
@@ -41,14 +44,9 @@ class CloudflareRealtimeKit:
             response.raise_for_status()
 
         return response.json()
-
-    # -----------------------------------------
+    
     # Create Participant
-    # -----------------------------------------
-
-        # -----------------------------------------
-    # Create Participant
-    # -----------------------------------------
+  
 
     def create_participant(
         self,

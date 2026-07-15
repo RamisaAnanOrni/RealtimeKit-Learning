@@ -5,9 +5,8 @@ from rest_framework import status
 from .services.cloudflare import CloudflareRealtimeKit
 
 
-# --------------------------------------------------
 # Health Check
-# --------------------------------------------------
+
 
 @api_view(["GET"])
 def health_check(request):
@@ -17,9 +16,7 @@ def health_check(request):
     })
 
 
-# --------------------------------------------------
 # Create Meeting
-# --------------------------------------------------
 
 @api_view(["POST"])
 def create_meeting(request):
@@ -27,18 +24,15 @@ def create_meeting(request):
     try:
         cloudflare = CloudflareRealtimeKit()
 
-        # -----------------------------------------
         # STEP 1 - Create Meeting
-        # -----------------------------------------
 
         meeting = cloudflare.create_meeting()
 
         meeting_data = meeting["data"]
         meeting_id = meeting_data["id"]
 
-        # -----------------------------------------
         # STEP 2 - Create Farmer
-        # -----------------------------------------
+        
 
         farmer = cloudflare.create_participant(
             meeting_id=meeting_id,
@@ -48,9 +42,7 @@ def create_meeting(request):
 
         farmer_data = farmer["data"]
 
-        # -----------------------------------------
         # STEP 3 - Create Veterinarian
-        # -----------------------------------------
 
         vet = cloudflare.create_participant(
             meeting_id=meeting_id,
@@ -60,9 +52,8 @@ def create_meeting(request):
 
         vet_data = vet["data"]
 
-        # -----------------------------------------
         # STEP 4 - Build Join URLs
-        # -----------------------------------------
+        
 
         frontend_url = "http://localhost:3000"
 
@@ -76,9 +67,9 @@ def create_meeting(request):
             f"?token={vet_data['token']}"
         )
 
-        # -----------------------------------------
+        
         # STEP 5 - Return Response
-        # -----------------------------------------
+        
 
         return Response({
             "success": True,
