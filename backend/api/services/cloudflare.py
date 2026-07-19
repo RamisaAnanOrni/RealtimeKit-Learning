@@ -14,8 +14,12 @@ class CloudflareRealtimeKit:
         print("TOKEN:", settings.CLOUDFLARE_API_TOKEN[:15] + "...")
         print("=========================================\n")
 
+        base_url = settings.CLOUDFLARE_BASE_URL.rstrip("/")
+        if not base_url.endswith("/client/v4"):
+            base_url = f"{base_url}/client/v4"
+
         self.base_url = (
-            f"{settings.CLOUDFLARE_BASE_URL}"
+            f"{base_url}"
             f"/accounts/{settings.CLOUDFLARE_ACCOUNT_ID}"
             f"/realtime/kit/{settings.CLOUDFLARE_APP_ID}"
         )
