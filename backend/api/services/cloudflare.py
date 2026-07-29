@@ -1,78 +1,71 @@
 import requests
 import uuid
-
 from django.conf import settings
 
 
 class CloudflareRealtimeKit:
-
     def __init__(self):
-        print("\n========== CLOUDFLARE SETTINGS ==========")
-        print("BASE URL:", settings.CLOUDFLARE_BASE_URL)
-        print("ACCOUNT:", settings.CLOUDFLARE_ACCOUNT_ID)
-        print("APP:", settings.CLOUDFLARE_APP_ID)
-        print("TOKEN:", settings.CLOUDFLARE_API_TOKEN[:15] + "...")
-        print("=========================================\n")
+        # Read directly from Django Settings
+        self.account_id = str(getattr(settings, "CLOUDFLARE_ACCOUNT_ID", "")).strip()
+        self.app_id = str(getattr(settings, "CLOUDFLARE_APP_ID", "")).strip()
+        self.api_token = str(getattr(settings, "CLOUDFLARE_API_TOKEN", "")).strip()
 
-        base_url = settings.CLOUDFLARE_BASE_URL.rstrip("/")
-        if not base_url.endswith("/client/v4"):
-            base_url = f"{base_url}/client/v4"
-
+        # Cloudflare Realtime Kit Base URL
         self.base_url = (
-            f"{base_url}"
-            f"/accounts/{settings.CLOUDFLARE_ACCOUNT_ID}"
-            f"/realtime/kit/{settings.CLOUDFLARE_APP_ID}"
+            f"https://api.cloudflare.com/client/v4/accounts/"
+            f"{self.account_id}/realtime/kit/{self.app_id}"
         )
 
-        self.headers = {
-            "Authorization": f"Bearer {settings.CLOUDFLARE_API_TOKEN}",
+    def _get_headers(self):
+        return {
+            "Authorization": f"Bearer {self.api_token}",
             "Content-Type": "application/json",
         }
 
-
-    # Create Meeting
-    
-
-    def create_meeting(self):
+    def create_meeting(self, title="Veterinary Consultation"):
+        """Create a real Cloudflare Meeting"""
+        url = f"{self.base_url}/meetings"
+        payload = {"title": title}
 
         response = requests.post(
-            f"{self.base_url}/meetings",
-            headers=self.headers,
-            json={"title": "Vet Consultation"}
+            url,
+            json=payload,
+            headers=self._get_headers(),
+            timeout=10
         )
 
-        if not response.ok:
-            print("========== CLOUDFLARE ERROR ==========")
-            print("Status Code:", response.status_code)
-            print("Response:", response.text)
-            response.raise_for_status()
+        if response.status_code not in [200, 201]:
+            raise Exception(f"Cloudflare API Error ({response.status_code}): {response.text}")
 
         return response.json()
-    
-    # Create Participant
-  
 
     def create_participant(
         self,
         meeting_id,
         name,
-        preset_name,
+        preset_name="group_call_participant",
+        custom_participant_id=None,
     ):
+        """Create a real Cloudflare Participant Token"""
+        url = f"{self.base_url}/meetings/{meeting_id}/participants"
+
+        if not custom_participant_id:
+            custom_participant_id = f"user_{uuid.uuid4().hex[:12]}"
+
+        payload = {
+            "name": name,
+            "preset_name": preset_name,
+            "custom_participant_id": custom_participant_id,
+        }
 
         response = requests.post(
-            f"{self.base_url}/meetings/{meeting_id}/participants",
-            headers=self.headers,
-            json={
-                "name": name,
-                "preset_name": preset_name,
-                "custom_participant_id": str(uuid.uuid4())
-            }
+            url,
+            json=payload,
+            headers=self._get_headers(),
+            timeout=10
         )
 
-        if not response.ok:
-            print("========== CLOUDFLARE ERROR ==========")
-            print("Status Code:", response.status_code)
-            print("Response:", response.text)
-            response.raise_for_status()
+        if response.status_code not in [200, 201]:
+            raise Exception(f"Cloudflare API Error ({response.status_code}): {response.text}")
 
         return response.json()
