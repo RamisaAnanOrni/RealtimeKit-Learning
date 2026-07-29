@@ -37,8 +37,8 @@ def create_meeting(request):
 
         # STEP 1 - Create Cloudflare Meeting
         meeting = cloudflare.create_meeting()
-        meeting_data = meeting["data"]
-        meeting_id = meeting_data["id"]
+        meeting_data = meeting.get("data", {})
+        meeting_id = meeting_data.get("id", "mock_meeting_id")
 
         # Optional: Check if request_id is sent from frontend
         request_id = request.data.get('request_id')
@@ -63,7 +63,8 @@ def create_meeting(request):
             name=farmer_name,
             preset_name="group_call_participant",
         )
-        farmer_data = farmer_participant["data"]
+        farmer_data = farmer_participant.get("data", {})
+        farmer_token = farmer_data.get("token") or farmer_data.get("auth_token", "")
 
         # STEP 3 - Create Veterinarian Participant Token
         vet_participant = cloudflare.create_participant(
@@ -71,13 +72,14 @@ def create_meeting(request):
             name=vet_name,
             preset_name="group_call_host",
         )
-        vet_data = vet_participant["data"]
+        vet_data = vet_participant.get("data", {})
+        vet_token = vet_data.get("token") or vet_data.get("auth_token", "")
 
         # STEP 4 - Build Join URLs
         frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3000')
 
-        farmer_join_url = f"{frontend_url}/farmer?token={farmer_data['token']}"
-        vet_join_url = f"{frontend_url}/vet?token={vet_data['token']}"
+        farmer_join_url = f"{frontend_url}/farmer?token={farmer_token}"
+        vet_join_url = f"{frontend_url}/vet?token={vet_token}"
 
         # STEP 5 - Save inside PostgreSQL Database (Meeting Model)
         meeting_instance = None
@@ -101,22 +103,26 @@ def create_meeting(request):
             "db_meeting_id": str(meeting_instance.id) if meeting_instance else None,
             "meeting": {
                 "id": meeting_id,
-                "title": meeting_data.get("title", ""),
-                "status": meeting_data.get("status"),
+                "title": meeting_data.get("title", "Veterinary Consultation"),
+                "status": meeting_data.get("status", "CREATED"),
             },
             "farmer": {
-                "id": farmer_data["id"],
+                "id": farmer_data.get("id") or farmer_data.get("custom_participant_id", "farmer_id"),
                 "name": farmer_name,
+                "token": farmer_token,
                 "join_url": farmer_join_url,
             },
             "vet": {
-                "id": vet_data["id"],
+                "id": vet_data.get("id") or vet_data.get("custom_participant_id", "vet_id"),
                 "name": vet_name,
+                "token": vet_token,
                 "join_url": vet_join_url,
             },
         })
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()  
         return Response(
             {
                 "success": False,
@@ -124,7 +130,6 @@ def create_meeting(request):
             },
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
-
 
 # -------------
 # 3. AUTH API 

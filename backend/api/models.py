@@ -76,7 +76,7 @@ class FarmerRequest(models.Model):
         CANCELLED = "CANCELLED", "Cancelled"
 
     farmer = models.ForeignKey(User, on_delete=models.CASCADE, related_name="farmer_requests")
-    problem = models.CharField(max_length=255)
+    problem = models.CharField(max_length=555)
     description = models.TextField()
     cow_image = models.ImageField(upload_to="cow_images/", null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
@@ -98,9 +98,12 @@ class Meeting(models.Model):
     request = models.OneToOneField(FarmerRequest, on_delete=models.CASCADE, related_name="meeting")
     vet = models.ForeignKey(Vet, on_delete=models.CASCADE)
     farmer = models.ForeignKey(User, on_delete=models.CASCADE)
-    cloudflare_meeting_id = models.CharField(max_length=255)
-    farmer_link = models.URLField(max_length=500, blank=True)
-    vet_link = models.URLField(max_length=500, blank=True)
+    cloudflare_meeting_id = models.CharField(max_length=1255, blank=True, null=True)
+    
+    
+    farmer_link = models.TextField(blank=True, null=True)
+    vet_link = models.TextField(blank=True, null=True)
+    
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.CREATED)
     created_at = models.DateTimeField(auto_now_add=True)
 
