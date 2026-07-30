@@ -23,7 +23,7 @@ STATIC_API_KEY = config("STATIC_API_KEY", default="agrivet-secret-lifetime-key-2
 FRONTEND_BASE_URL = config("FRONTEND_BASE_URL", default="http://localhost:3000")
 
 CORS_ALLOWED_ORIGINS = [
-    "http://localhost:3000",
+    "http://localhost:3000", "https://vetcall.insurecow.com",
 ]
 
 # Application definition
@@ -119,7 +119,8 @@ USE_I18N = True
 USE_TZ = True
 
 # Static & Media Files
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'

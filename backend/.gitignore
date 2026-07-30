@@ -16,3 +16,6 @@ db.sqlite3
 
 # PyCharm
 .idea/
+
+# Django collectstatic output
+staticfiles/
