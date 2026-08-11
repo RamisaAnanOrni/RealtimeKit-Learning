@@ -20,10 +20,15 @@ CLOUDFLARE_API_TOKEN = config("CLOUDFLARE_API_TOKEN", default="")
 
 # Static Lifetime Token & Frontend URL
 STATIC_API_KEY = config("STATIC_API_KEY", default="agrivet-secret-lifetime-key-2026")
-FRONTEND_BASE_URL = config("FRONTEND_BASE_URL", default="http://localhost:3000")
+FRONTEND_BASE_URL = config("FRONTEND_BASE_URL", default="https://vetbackend.insurecow.com")
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
+    "https://vetbackend.insurecow.com",
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    "https://vetbackend.insurecow.com",
 ]
 
 # Application definition
@@ -84,7 +89,7 @@ DATABASES = {
         'NAME': config('DB_NAME', default='agrivet_db'),
         'USER': config('DB_USER', default='postgres'),
         'PASSWORD': config('DB_PASSWORD', default='1234'),
-        'HOST': config('DB_HOST', default='localhost'),
+        'HOST': config('DB_HOST', default='194.238.22.134'),
         'PORT': config('DB_PORT', default='5432'),
     }
 }
