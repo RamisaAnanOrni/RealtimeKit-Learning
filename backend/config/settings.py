@@ -89,9 +89,10 @@ DATABASES = {
         'NAME': config('DB_NAME', default='agrivet_db'),
         'USER': config('DB_USER', default='agrivet_user'),
         'PASSWORD': config('DB_PASSWORD', default='StrongPassword123!'),
-        'HOST': config('DB_HOST', default='localhost'),
+        'HOST': config('DB_HOST', default='localhost'),  #194.238.22.134
         'PORT': config('DB_PORT', default='5432'),
     }
+    
 }
 # Custom User Model
 AUTH_USER_MODEL = 'api.User'
