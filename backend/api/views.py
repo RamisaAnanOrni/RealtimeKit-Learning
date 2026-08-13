@@ -7,13 +7,21 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from django.contrib.auth import authenticate
 from django.conf import settings
+from django.shortcuts import render
+from django.views.decorators.clickjacking import xframe_options_exempt
 
 from .models import FarmerRequest, Meeting, Vet
 from .serializers import FarmerRequestSerializer, MeetingSerializer
 from .permissions import IsFarmer, IsVet, IsAdminUserRole
 from .services.cloudflare import CloudflareRealtimeKit
 
+@xframe_options_exempt
+def farmer_join(request):
+    return render(request, 'meeting_join.html')
 
+@xframe_options_exempt
+def vet_join(request):
+    return render(request, 'meeting_join.html')
 # -----------------
 # 1. HEALTH CHECK 
 # -----------------
