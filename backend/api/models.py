@@ -75,11 +75,16 @@ class FarmerRequest(models.Model):
         COMPLETED = "COMPLETED", "Completed"
         CANCELLED = "CANCELLED", "Cancelled"
 
+    class Source(models.TextChoices):
+        GUEST = "GUEST", "Guest"
+        PORTAL = "PORTAL", "Portal"
+
     farmer = models.ForeignKey(User, on_delete=models.CASCADE, related_name="farmer_requests")
     problem = models.CharField(max_length=555)
     description = models.TextField()
     cow_image = models.ImageField(upload_to="cow_images/", null=True, blank=True)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING)
+    source = models.CharField(max_length=10, choices=Source.choices, default=Source.PORTAL)
     assigned_vet = models.ForeignKey(Vet, on_delete=models.SET_NULL, null=True, blank=True, related_name="assigned_requests")
     created_at = models.DateTimeField(auto_now_add=True)
 
