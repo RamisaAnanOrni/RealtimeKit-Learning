@@ -16,8 +16,10 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
-
+from api.views import farmer_join, vet_join
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", include("api.urls")),
+    path('farmer/', farmer_join, name='farmer_join'),
+    path('vet/', vet_join, name='vet_join'),
 ]

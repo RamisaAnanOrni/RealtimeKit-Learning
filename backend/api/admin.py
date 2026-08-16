@@ -62,11 +62,12 @@ class FarmerRequestAdmin(admin.ModelAdmin):
         'farmer',
         'problem',
         'status',
+        'source',
         'assigned_vet',
         'show_cow_image',
         'created_at',
     )
-    list_filter = ('status', 'created_at')
+    list_filter = ('status', 'source', 'created_at')
     search_fields = ('farmer__username', 'problem', 'description')
     readonly_fields = ('show_cow_image_large',)
 

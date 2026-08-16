@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Veterinary Consultation</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: #0f172a;
+    }
+    #my-meeting {
+      width: 100%;
+      height: 100vh;
+    }
+    .error {
+      color: white;
+      font-family: system-ui, sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      text-align: center;
+      padding: 20px;
+    }
+  </style>
+
+  <!-- Load UI Kit custom elements -->
+  <script type="module">
+    import { defineCustomElements } from 'https://cdn.jsdelivr.net/npm/@cloudflare/realtimekit-ui@latest/loader/index.es2017.js';
+    defineCustomElements();
+  </script>
+
+  <!-- Load Core SDK (browser / UMD build – this avoids the uuid error) -->
+  <script src="https://cdn.jsdelivr.net/npm/@cloudflare/realtimekit@latest/dist/browser.js"></script>
+</head>
+<body>
+  <div id="error" class="error" style="display:none;"></div>
+
+  <rtk-meeting id="my-meeting" show-setup-screen="true"></rtk-meeting>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const authToken = params.get('token') || params.get('authToken');
+
+    if (!authToken) {
+      document.getElementById('error').style.display = 'flex';
+      document.getElementById('error').innerText = 'No token found in the URL. Please use a valid join link.';
+      document.getElementById('my-meeting').style.display = 'none';
+    } else {
+      RealtimeKitClient.init({
+        authToken: authToken,
+        defaults: {
+          audio: true,
+          video: true
+        }
+      }).then(function(meeting) {
+        document.getElementById('my-meeting').meeting = meeting;
+      }).catch(function(err) {
+        console.error(err);
+        document.getElementById('error').style.display = 'flex';
+        document.getElementById('error').innerText = 'Failed to join meeting: ' + (err.message || err);
+        document.getElementById('my-meeting').style.display = 'none';
+      });
+    }
+  </script>
+</body>
+</html>
