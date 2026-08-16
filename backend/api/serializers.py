@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import User, Vet, FarmerRequest, Meeting
+from .services.guest import normalize_phone
 
 class UserSerializer(serializers.ModelSerializer):
     class Meta:
@@ -29,3 +30,25 @@ class MeetingSerializer(serializers.ModelSerializer):
     class Meta:
         model = Meeting
         fields = ['id', 'request', 'vet', 'farmer', 'cloudflare_meeting_id', 'farmer_link', 'vet_link', 'status', 'created_at']
+
+class GuestRequestCreateSerializer(serializers.Serializer):
+    """Validate the payload for a guest request submission."""
+
+    phone = serializers.CharField(required=True)
+    problem = serializers.CharField(required=True)
+    description = serializers.CharField(required=False, allow_blank=True, default="")
+
+    def validate_phone(self, value):
+        phone = normalize_phone(value)
+        if not phone:
+            raise serializers.ValidationError("A valid phone number is required.")
+        if len(phone) < 7 or len(phone) > 15:
+            raise serializers.ValidationError(
+                "Phone number must contain between 7 and 15 digits."
+            )
+        return phone
+
+    def validate_problem(self, value):
+        if not value.strip():
+            raise serializers.ValidationError("Problem description is required.")
+        return value.strip()

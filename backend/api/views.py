@@ -11,9 +11,14 @@ from django.shortcuts import render
 from django.views.decorators.clickjacking import xframe_options_exempt
 
 from .models import FarmerRequest, Meeting, Vet
-from .serializers import FarmerRequestSerializer, MeetingSerializer
+from .serializers import (
+    FarmerRequestSerializer,
+    MeetingSerializer,
+    GuestRequestCreateSerializer,
+)
 from .permissions import IsFarmer, IsVet, IsAdminUserRole
 from .services.cloudflare import CloudflareRealtimeKit
+from .services.guest import find_or_create_farmer_by_phone
 
 @xframe_options_exempt
 def farmer_join(request):
@@ -210,3 +215,120 @@ class MeetingDetailByUUIDView(APIView):
             })
         except Meeting.DoesNotExist:
             return Response({'detail': 'Meeting Not Found'}, status=status.HTTP_404_NOT_FOUND)
+
+
+# -----------------
+# 7. GUEST APIs
+# ----------------
+@api_view(["POST"])
+@permission_classes([AllowAny])
+def guest_request_create(request):
+    """Public endpoint for a guest to open a consultation request by phone.
+
+    Finds or creates the farmer, then creates a PENDING request. If the farmer
+    already has an open (PENDING/ASSIGNED) request it is returned instead of
+    creating a duplicate. Never calls Cloudflare and never creates a Meeting.
+    """
+    serializer = GuestRequestCreateSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    farmer = find_or_create_farmer_by_phone(data["phone"])
+
+    open_request = (
+        FarmerRequest.objects.filter(
+            farmer=farmer,
+            status__in=[
+                FarmerRequest.Status.PENDING,
+                FarmerRequest.Status.ASSIGNED,
+            ],
+        )
+        .order_by("-created_at")
+        .first()
+    )
+    if open_request:
+        return Response({
+            "success": True,
+            "request_id": open_request.id,
+            "status": open_request.status,
+            "message": "You already have an open request. Returning the existing one.",
+        })
+
+    farmer_request = FarmerRequest.objects.create(
+        farmer=farmer,
+        problem=data["problem"],
+        description=data.get("description", ""),
+        status=FarmerRequest.Status.PENDING,
+        assigned_vet=None,
+        source=FarmerRequest.Source.GUEST,
+    )
+
+    return Response({
+        "success": True,
+        "request_id": farmer_request.id,
+        "status": farmer_request.status,
+        "message": "Request submitted successfully. A veterinarian will be assigned shortly.",
+    })
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def guest_request_status(request, request_id):
+    """Public endpoint that reports a guest request's current status.
+
+    The farmer join link is surfaced only after the admin generated the
+    Cloudflare meeting (i.e. a related Meeting with a farmer_link exists).
+    """
+    try:
+        farmer_request = FarmerRequest.objects.select_related(
+            "assigned_vet__user"
+        ).get(id=request_id)
+    except FarmerRequest.DoesNotExist:
+        return Response(
+            {"detail": "Request Not Found"}, status=status.HTTP_404_NOT_FOUND
+        )
+
+    try:
+        meeting = farmer_request.meeting
+    except Meeting.DoesNotExist:
+        meeting = None
+
+    payload = {
+        "request_id": farmer_request.id,
+        "status": farmer_request.status,
+        "problem": farmer_request.problem,
+        "message": "",
+    }
+
+    vet_user = (
+        farmer_request.assigned_vet.user
+        if farmer_request.assigned_vet and farmer_request.assigned_vet.user
+        else None
+    )
+    if vet_user:
+        payload["assigned_vet_name"] = "Dr. {}".format(
+            vet_user.get_full_name() or vet_user.username
+        )
+
+    if meeting and meeting.farmer_link:
+        payload["status"] = FarmerRequest.Status.MEETING_CREATED
+        payload["farmer_join_link"] = meeting.farmer_link
+        payload["message"] = (
+            "A veterinarian is ready. Join the consultation using the link."
+        )
+    elif farmer_request.status == FarmerRequest.Status.PENDING:
+        payload["message"] = (
+            "Your request is pending. A veterinarian will be assigned soon."
+        )
+    elif farmer_request.status == FarmerRequest.Status.ASSIGNED:
+        payload["message"] = (
+            "A veterinarian has been assigned. The meeting link will be "
+            "available soon."
+        )
+    elif farmer_request.status == FarmerRequest.Status.MEETING_CREATED:
+        payload["message"] = (
+            "A veterinarian has been assigned. The meeting link will be "
+            "available soon."
+        )
+
+    return Response(payload)
