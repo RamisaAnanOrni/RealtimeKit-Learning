@@ -82,9 +82,9 @@ DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
         'NAME': config('DB_NAME', default='agrivet_db'),
-        'USER': config('DB_USER', default='postgres'),
-        'PASSWORD': config('DB_PASSWORD', default='1234'),
-        'HOST': config('DB_HOST', default='localhost'),
+        'USER': config('DB_USER', default='agrivet_user'),
+        'PASSWORD': config('DB_PASSWORD', default='StrongPassword123!'),
+        'HOST': config('DB_HOST', default='194.238.22.134'),
         'PORT': config('DB_PORT', default='5432'),
     }
 }
