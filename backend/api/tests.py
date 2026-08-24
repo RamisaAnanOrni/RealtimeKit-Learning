@@ -2,6 +2,9 @@ from django.test import TestCase
 
 from .models import FarmerRequest, Meeting, User, Vet
 from .services.guest import find_or_create_farmer_by_phone, normalize_phone
+from .services.url_shortener import shorten_url
+from unittest.mock import patch, Mock
+import requests
 
 
 class NormalizePhoneTests(TestCase):
@@ -168,3 +171,79 @@ class GuestRequestStatusTests(TestCase):
             body["farmer_join_link"], "http://localhost:3000/farmer?token=abc"
         )
         self.assertNotIn("vet_link", body)
+
+
+class URLShortenerUnitTests(TestCase):
+    def test_bitly_success(self):
+        long = "http://example.com/very/long/url?with=params"
+        mock_resp = Mock()
+        mock_resp.status_code = 200
+        # simulate Bitly response structure
+        mock_resp.json.return_value = {"link": "http://bit.ly/short123"}
+
+        with patch("api.services.url_shortener.requests.post", return_value=mock_resp):
+            with patch("django.conf.settings.BITLY_TOKEN", "fake-token"):
+                short = shorten_url(long)
+                self.assertEqual(short, "http://bit.ly/short123")
+
+    def test_bitly_timeout_fallback(self):
+        long = "http://example.com/very/long/url"
+        with patch("api.services.url_shortener.requests.post", side_effect=requests.exceptions.Timeout):
+            short = shorten_url(long)
+            self.assertEqual(short, long)
+
+
+class CreateMeetingIntegrationTests(TestCase):
+    def setUp(self):
+        self.farmer = User.objects.create_user(
+            username="farmer1", phone="880171123456", role=User.Role.FARMER
+        )
+        self.vet_user = User.objects.create_user(
+            username="vet1", phone="880171112222", role=User.Role.VET
+        )
+        self.vet = Vet.objects.create(user=self.vet_user, speciality="General")
+        self.req = FarmerRequest.objects.create(
+            farmer=self.farmer,
+            problem="Cow fever",
+            status=FarmerRequest.Status.ASSIGNED,
+            assigned_vet=self.vet,
+            source=FarmerRequest.Source.GUEST,
+        )
+
+    @patch("api.views.CloudflareRealtimeKit")
+    def test_create_meeting_stores_shortened_links(self, mock_cf_class):
+        # Mock Cloudflare client behavior
+        instance = mock_cf_class.return_value
+        instance.create_meeting.return_value = {"data": {"id": "m-123", "title": "t", "status": "CREATED"}}
+        farmer_part = {"data": {"id": "p-f", "token": "farmer-token"}}
+        vet_part = {"data": {"id": "p-v", "token": "vet-token"}}
+        instance.create_participant.side_effect = [farmer_part, vet_part]
+
+        with patch("api.views.shorten_url", return_value="http://bit.ly/abc"):
+            response = self.client.post("/api/meeting/create/", {"request_id": str(self.req.id)}, format="json")
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            self.assertTrue(body.get("success"))
+            self.assertEqual(body["farmer"]["join_url"], "http://bit.ly/abc")
+
+            meeting = Meeting.objects.get(request=self.req)
+            self.assertEqual(meeting.farmer_link, "http://bit.ly/abc")
+
+    @patch("api.views.CloudflareRealtimeKit")
+    def test_create_meeting_shortener_failure_fallback(self, mock_cf_class):
+        instance = mock_cf_class.return_value
+        instance.create_meeting.return_value = {"data": {"id": "m-456", "title": "t", "status": "CREATED"}}
+        farmer_part = {"data": {"id": "p-f", "token": "farmer-token-2"}}
+        vet_part = {"data": {"id": "p-v", "token": "vet-token-2"}}
+        instance.create_participant.side_effect = [farmer_part, vet_part]
+
+        # Simulate shorten_url raising an error; view should fall back to long URL
+        with patch("api.views.shorten_url", side_effect=Exception("boom")):
+            response = self.client.post("/api/meeting/create/", {"request_id": str(self.req.id)}, format="json")
+            self.assertEqual(response.status_code, 200)
+            body = response.json()
+            # join_url should be present and be the long URL (not shortened)
+            self.assertIn("/farmer?token=farmer-token-2", body["farmer"]["join_url"])
+
+            meeting = Meeting.objects.get(request=self.req)
+            self.assertIn("/farmer?token=farmer-token-2", meeting.farmer_link)

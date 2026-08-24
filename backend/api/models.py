@@ -114,3 +114,51 @@ class Meeting(models.Model):
 
     def __str__(self):
         return f"Meeting #{self.id} - Vet: {self.vet.user.username}"
+
+
+# Automatically shorten meeting links after creation/update when enabled
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from django.conf import settings
+
+try:
+    # import here to avoid import-time network calls in migrations
+    from .services.url_shortener import shorten_url
+except Exception:
+    # If the service import fails (tests/migrations), provide a noop fallback
+    def shorten_url(url):
+        return url
+
+
+def _looks_shortened(url: str) -> bool:
+    if not url:
+        return True
+    shortened_domains = ("bit.ly", "tiny.one", "t.ly")
+    return any(d in url for d in shortened_domains)
+
+
+@receiver(post_save, sender=Meeting)
+def _shorten_meeting_links(sender, instance: Meeting, created, **kwargs):
+    if not getattr(settings, "ENABLE_URL_SHORTENING", False):
+        return
+
+    updates = {}
+    if instance.farmer_link and not _looks_shortened(instance.farmer_link):
+        try:
+            short = shorten_url(instance.farmer_link)
+            if short and short != instance.farmer_link:
+                updates["farmer_link"] = short
+        except Exception:
+            pass
+
+    if instance.vet_link and not _looks_shortened(instance.vet_link):
+        try:
+            short = shorten_url(instance.vet_link)
+            if short and short != instance.vet_link:
+                updates["vet_link"] = short
+        except Exception:
+            pass
+
+    if updates:
+        # Use queryset update() to avoid triggering save() / signals again
+        sender.objects.filter(pk=instance.pk).update(**updates)

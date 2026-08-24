@@ -10,6 +10,7 @@ from django.utils.html import format_html
 
 from .models import FarmerRequest, Meeting, User, Vet
 from .services.cloudflare import CloudflareRealtimeKit
+from .services.url_shortener import shorten_url
 
 
 # -----------------------
@@ -143,6 +144,13 @@ class FarmerRequestAdmin(admin.ModelAdmin):
                     f"{frontend_url}/farmer?token={farmer_p['data']['token']}"
                 )
                 v_link = f"{frontend_url}/vet?token={vet_p['data']['token']}"
+
+                # Best-effort shorten
+                try:
+                    f_link = shorten_url(f_link)
+                    v_link = shorten_url(v_link)
+                except Exception:
+                    pass
 
                 Meeting.objects.create(
                     request=req,
@@ -369,6 +377,12 @@ class MeetingAdmin(admin.ModelAdmin):
             )
             f_link = f"{frontend_url}/farmer?token={farmer_p['data']['token']}"
             v_link = f"{frontend_url}/vet?token={vet_p['data']['token']}"
+
+            try:
+                f_link = shorten_url(f_link)
+                v_link = shorten_url(v_link)
+            except Exception:
+                pass
 
             meeting_instance.cloudflare_meeting_id = m_id
             meeting_instance.farmer_link = f_link
