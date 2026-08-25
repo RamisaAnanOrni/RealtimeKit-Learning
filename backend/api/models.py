@@ -49,6 +49,25 @@ class User(AbstractUser):
         return f"{self.username} ({self.role})"
 
 
+class Livestock(models.Model):
+    class AnimalType(models.TextChoices):
+        CATTLE = "CATTLE", "Cattle"
+        POULTRY = "POULTRY", "Poultry"
+        GOAT = "GOAT", "Goat"
+
+    farmer = models.ForeignKey(User, on_delete=models.CASCADE, related_name="livestock")
+    animal_type = models.CharField(max_length=20, choices=AnimalType.choices)
+    count = models.PositiveIntegerField(default=0)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["farmer", "animal_type"], name="unique_farmer_animal_type")]
+
+
+class RewardAccount(models.Model):
+    farmer = models.OneToOneField(User, on_delete=models.CASCADE, related_name="reward_account")
+    points = models.PositiveIntegerField(default=0)
+
+
 # Vet Profile Model
 class Vet(models.Model):
     class Status(models.TextChoices):

@@ -10,7 +10,7 @@ from django.conf import settings
 from django.shortcuts import render
 from django.views.decorators.clickjacking import xframe_options_exempt
 
-from .models import FarmerRequest, Meeting, Vet
+from .models import FarmerRequest, Livestock, Meeting, RewardAccount, User, Vet
 from .serializers import (
     FarmerRequestSerializer,
     MeetingSerializer,
@@ -167,6 +167,21 @@ class CustomLoginView(APIView):
         return Response({'detail': 'Invalid Credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
 
+class FarmerSignupView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        phone = str(request.data.get('phone', '')).strip()
+        full_name = str(request.data.get('fullName', '')).strip()
+        password = str(request.data.get('password', ''))
+        if not phone or not full_name or len(password) < 6:
+            return Response({'detail': 'Name, phone, and a password of at least 6 characters are required.'}, status=status.HTTP_400_BAD_REQUEST)
+        if User.objects.filter(username=phone).exists() or User.objects.filter(phone=phone).exists():
+            return Response({'detail': 'An account with this phone number already exists.'}, status=status.HTTP_409_CONFLICT)
+        user = User.objects.create_user(username=phone, phone=phone, first_name=full_name, role=User.Role.FARMER, password=password)
+        return Response({'success': True, 'message': 'Account created successfully.'}, status=status.HTTP_201_CREATED)
+
+
 # ------------------
 # 4. FARMER APIs 
 # ----------------
@@ -183,6 +198,42 @@ class FarmerRequestsListView(generics.ListAPIView):
 
     def get_queryset(self):
         return FarmerRequest.objects.filter(farmer=self.request.user).order_by('-created_at')
+
+
+class FarmerDashboardView(APIView):
+    permission_classes = [IsAuthenticated, IsFarmer]
+
+    def get(self, request):
+        livestock = {
+            item.animal_type: item.count
+            for item in Livestock.objects.filter(farmer=request.user)
+        }
+        requests = FarmerRequest.objects.filter(farmer=request.user).order_by('-created_at')
+        logs = [
+            {
+                'id': f'R-{item.id:03d}',
+                'animal_id': item.problem[:12],
+                'treatment': item.problem,
+                'date': item.created_at.strftime('%b %d, %Y'),
+                'status': item.get_status_display(),
+            }
+            for item in requests[:10]
+        ]
+        return Response({
+            'user': {
+                'id': request.user.id,
+                'name': request.user.get_full_name() or request.user.username,
+                'phone': request.user.phone,
+            },
+            'livestock': {
+                'cattle': livestock.get(Livestock.AnimalType.CATTLE, 0),
+                'poultry': livestock.get(Livestock.AnimalType.POULTRY, 0),
+                'goats': livestock.get(Livestock.AnimalType.GOAT, 0),
+            },
+            'appointments': requests.filter(status__in=[FarmerRequest.Status.ASSIGNED, FarmerRequest.Status.MEETING_CREATED, FarmerRequest.Status.IN_PROGRESS]).count(),
+            'rewards': RewardAccount.objects.filter(farmer=request.user).values_list('points', flat=True).first() or 0,
+            'logs': logs,
+        })
 
 
 # ----------------
