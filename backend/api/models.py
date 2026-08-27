@@ -1,6 +1,9 @@
 import uuid
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from django.db.models.signals import pre_save
+from django.dispatch import receiver
+from django.conf import settings
 
 
 # Custom Manager to handle 'ADMIN' role on createsuperuser
@@ -116,18 +119,11 @@ class Meeting(models.Model):
         return f"Meeting #{self.id} - Vet: {self.vet.user.username}"
 
 
-# Automatically shorten meeting links after creation/update when enabled
-from django.db.models.signals import post_save
-from django.dispatch import receiver
-from django.conf import settings
-
 try:
-    # import here to avoid import-time network calls in migrations
-    from .services.url_shortener import shorten_url
+    from .services.url_shortener import shorten_url_required
 except Exception:
-    # If the service import fails (tests/migrations), provide a noop fallback
-    def shorten_url(url):
-        return url
+    def shorten_url_required(url):
+        raise RuntimeError("URL shortener service is unavailable")
 
 
 def _looks_shortened(url: str) -> bool:
@@ -137,28 +133,13 @@ def _looks_shortened(url: str) -> bool:
     return any(d in url for d in shortened_domains)
 
 
-@receiver(post_save, sender=Meeting)
-def _shorten_meeting_links(sender, instance: Meeting, created, **kwargs):
+@receiver(pre_save, sender=Meeting)
+def _shorten_meeting_links(sender, instance: Meeting, **kwargs):
     if not getattr(settings, "ENABLE_URL_SHORTENING", False):
         return
 
-    updates = {}
     if instance.farmer_link and not _looks_shortened(instance.farmer_link):
-        try:
-            short = shorten_url(instance.farmer_link)
-            if short and short != instance.farmer_link:
-                updates["farmer_link"] = short
-        except Exception:
-            pass
+        instance.farmer_link = shorten_url_required(instance.farmer_link)
 
     if instance.vet_link and not _looks_shortened(instance.vet_link):
-        try:
-            short = shorten_url(instance.vet_link)
-            if short and short != instance.vet_link:
-                updates["vet_link"] = short
-        except Exception:
-            pass
-
-    if updates:
-        # Use queryset update() to avoid triggering save() / signals again
-        sender.objects.filter(pk=instance.pk).update(**updates)
+        instance.vet_link = shorten_url_required(instance.vet_link)

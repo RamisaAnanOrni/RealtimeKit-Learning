@@ -160,15 +160,15 @@ class GuestRequestStatusTests(TestCase):
             vet=vet,
             farmer=self.request_obj.farmer,
             cloudflare_meeting_id="cf-123",
-            farmer_link="http://localhost:3000/farmer?token=abc",
-            vet_link="http://localhost:3000/vet?token=xyz",
+            farmer_link="http://bit.ly/abc",
+            vet_link="http://bit.ly/xyz",
         )
 
         response = self.client.get(f"/api/guest/request/{self.request_obj.id}/")
         body = response.json()
         self.assertEqual(body["status"], "MEETING_CREATED")
         self.assertEqual(
-            body["farmer_join_link"], "http://localhost:3000/farmer?token=abc"
+            body["farmer_join_link"], "http://bit.ly/abc"
         )
         self.assertNotIn("vet_link", body)
 
@@ -219,7 +219,7 @@ class CreateMeetingIntegrationTests(TestCase):
         vet_part = {"data": {"id": "p-v", "token": "vet-token"}}
         instance.create_participant.side_effect = [farmer_part, vet_part]
 
-        with patch("api.views.shorten_url", return_value="http://bit.ly/abc"):
+        with patch("api.views.shorten_url_required", return_value="http://bit.ly/abc"):
             response = self.client.post("/api/meeting/create/", {"request_id": str(self.req.id)}, format="json")
             self.assertEqual(response.status_code, 200)
             body = response.json()
@@ -230,20 +230,15 @@ class CreateMeetingIntegrationTests(TestCase):
             self.assertEqual(meeting.farmer_link, "http://bit.ly/abc")
 
     @patch("api.views.CloudflareRealtimeKit")
-    def test_create_meeting_shortener_failure_fallback(self, mock_cf_class):
+    def test_create_meeting_shortener_failure_does_not_save_meeting(self, mock_cf_class):
         instance = mock_cf_class.return_value
         instance.create_meeting.return_value = {"data": {"id": "m-456", "title": "t", "status": "CREATED"}}
         farmer_part = {"data": {"id": "p-f", "token": "farmer-token-2"}}
         vet_part = {"data": {"id": "p-v", "token": "vet-token-2"}}
         instance.create_participant.side_effect = [farmer_part, vet_part]
 
-        # Simulate shorten_url raising an error; view should fall back to long URL
-        with patch("api.views.shorten_url", side_effect=Exception("boom")):
+        # A shortening failure must not persist a raw token URL.
+        with patch("api.views.shorten_url_required", side_effect=Exception("boom")):
             response = self.client.post("/api/meeting/create/", {"request_id": str(self.req.id)}, format="json")
-            self.assertEqual(response.status_code, 200)
-            body = response.json()
-            # join_url should be present and be the long URL (not shortened)
-            self.assertIn("/farmer?token=farmer-token-2", body["farmer"]["join_url"])
-
-            meeting = Meeting.objects.get(request=self.req)
-            self.assertIn("/farmer?token=farmer-token-2", meeting.farmer_link)
+            self.assertEqual(response.status_code, 500)
+            self.assertFalse(Meeting.objects.filter(request=self.req).exists())

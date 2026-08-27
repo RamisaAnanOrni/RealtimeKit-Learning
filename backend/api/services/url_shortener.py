@@ -50,3 +50,13 @@ def shorten_url(long_url: str) -> str:
         logger.exception("URL shortening failed; falling back to original URL")
 
     return long_url
+
+
+def shorten_url_required(long_url: str) -> str:
+    """Shorten a URL or raise instead of allowing a raw token URL to persist."""
+    shortened_url = shorten_url(long_url)
+    if shortened_url == long_url:
+        raise RuntimeError(
+            "Bitly did not shorten the meeting URL; the meeting was not finalized."
+        )
+    return shortened_url
