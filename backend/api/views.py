@@ -90,7 +90,7 @@ def create_meeting(request):
         vet_token = vet_data.get("token") or vet_data.get("auth_token", "")
 
         # STEP 4 - Build Join URLs
-        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3000')
+        frontend_url = getattr(settings, 'FRONTEND_BASE_URL', 'https://vetbackend.insurecow.com')
 
         farmer_join_url = f"{frontend_url}/farmer?token={farmer_token}"
         vet_join_url = f"{frontend_url}/vet?token={vet_token}"
