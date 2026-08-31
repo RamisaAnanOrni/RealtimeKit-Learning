@@ -301,6 +301,7 @@ class MeetingAdmin(admin.ModelAdmin):
 
     # Button Action Handler
     def process_generate_meeting(self, request, object_id):
+        print(f"\nDEBUG: process_generate_meeting CALLED with object_id={object_id}")
         opts = self.model._meta
 
         # Ensure object_id is a valid UUID object
@@ -381,7 +382,9 @@ class MeetingAdmin(admin.ModelAdmin):
             meeting_instance.farmer_link = f_link
             meeting_instance.vet_link = v_link
             meeting_instance.status = Meeting.Status.CREATED
+            print(f"DEBUG: Saving meeting farmer_link={f_link} vet_link={v_link}")
             meeting_instance.save()
+            print(f"DEBUG: Meeting saved. DB farmer_link={meeting_instance.farmer_link} vet_link={meeting_instance.vet_link}")
 
             if meeting_instance.request:
                 meeting_instance.request.status = (

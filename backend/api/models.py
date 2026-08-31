@@ -135,7 +135,7 @@ def _looks_shortened(url: str) -> bool:
 
 @receiver(pre_save, sender=Meeting)
 def _shorten_meeting_links(sender, instance: Meeting, **kwargs):
-    if not getattr(settings, "ENABLE_URL_SHORTENING", False):
+    if not getattr(settings, "ENABLE_URL_SHORTENING", True):
         return
 
     if instance.farmer_link and not _looks_shortened(instance.farmer_link):
