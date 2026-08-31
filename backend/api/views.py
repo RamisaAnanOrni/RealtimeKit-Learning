@@ -19,6 +19,7 @@ from .serializers import (
 from .permissions import IsFarmer, IsVet, IsAdminUserRole
 from .services.cloudflare import CloudflareRealtimeKit
 from .services.guest import find_or_create_farmer_by_phone
+from .services.url_shortener import shorten_url_required
 
 @xframe_options_exempt
 def farmer_join(request):
@@ -94,6 +95,8 @@ def create_meeting(request):
         farmer_join_url = f"{frontend_url}/farmer?token={farmer_token}"
         vet_join_url = f"{frontend_url}/vet?token={vet_token}"
 
+        farmer_join_url = shorten_url_required(farmer_join_url)
+        vet_join_url = shorten_url_required(vet_join_url)
         # STEP 5 - Save inside PostgreSQL Database (Meeting Model)
         meeting_instance = None
         if farmer_request and vet_profile and farmer_user:

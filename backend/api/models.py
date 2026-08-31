@@ -1,6 +1,9 @@
 import uuid
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
+from django.db.models.signals import pre_save
+from django.dispatch import receiver
+from django.conf import settings
 
 
 # Custom Manager to handle 'ADMIN' role on createsuperuser
@@ -114,3 +117,29 @@ class Meeting(models.Model):
 
     def __str__(self):
         return f"Meeting #{self.id} - Vet: {self.vet.user.username}"
+
+
+try:
+    from .services.url_shortener import shorten_url_required
+except Exception:
+    def shorten_url_required(url):
+        raise RuntimeError("URL shortener service is unavailable")
+
+
+def _looks_shortened(url: str) -> bool:
+    if not url:
+        return True
+    shortened_domains = ("bit.ly", "tiny.one", "t.ly")
+    return any(d in url for d in shortened_domains)
+
+
+@receiver(pre_save, sender=Meeting)
+def _shorten_meeting_links(sender, instance: Meeting, **kwargs):
+    if not getattr(settings, "ENABLE_URL_SHORTENING", True):
+        return
+
+    if instance.farmer_link and not _looks_shortened(instance.farmer_link):
+        instance.farmer_link = shorten_url_required(instance.farmer_link)
+
+    if instance.vet_link and not _looks_shortened(instance.vet_link):
+        instance.vet_link = shorten_url_required(instance.vet_link)

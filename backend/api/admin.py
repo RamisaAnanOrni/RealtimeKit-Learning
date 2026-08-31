@@ -10,6 +10,7 @@ from django.utils.html import format_html
 
 from .models import FarmerRequest, Meeting, User, Vet
 from .services.cloudflare import CloudflareRealtimeKit
+from .services.url_shortener import shorten_url_required
 
 
 # -----------------------
@@ -143,6 +144,9 @@ class FarmerRequestAdmin(admin.ModelAdmin):
                     f"{frontend_url}/farmer?token={farmer_p['data']['token']}"
                 )
                 v_link = f"{frontend_url}/vet?token={vet_p['data']['token']}"
+
+                f_link = shorten_url_required(f_link)
+                v_link = shorten_url_required(v_link)
 
                 Meeting.objects.create(
                     request=req,
@@ -297,6 +301,7 @@ class MeetingAdmin(admin.ModelAdmin):
 
     # Button Action Handler
     def process_generate_meeting(self, request, object_id):
+        print(f"\nDEBUG: process_generate_meeting CALLED with object_id={object_id}")
         opts = self.model._meta
 
         # Ensure object_id is a valid UUID object
@@ -370,11 +375,16 @@ class MeetingAdmin(admin.ModelAdmin):
             f_link = f"{frontend_url}/farmer?token={farmer_p['data']['token']}"
             v_link = f"{frontend_url}/vet?token={vet_p['data']['token']}"
 
+            f_link = shorten_url_required(f_link)
+            v_link = shorten_url_required(v_link)
+
             meeting_instance.cloudflare_meeting_id = m_id
             meeting_instance.farmer_link = f_link
             meeting_instance.vet_link = v_link
             meeting_instance.status = Meeting.Status.CREATED
+            print(f"DEBUG: Saving meeting farmer_link={f_link} vet_link={v_link}")
             meeting_instance.save()
+            print(f"DEBUG: Meeting saved. DB farmer_link={meeting_instance.farmer_link} vet_link={meeting_instance.vet_link}")
 
             if meeting_instance.request:
                 meeting_instance.request.status = (

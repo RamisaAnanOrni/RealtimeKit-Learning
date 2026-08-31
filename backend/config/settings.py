@@ -31,6 +31,12 @@ CSRF_TRUSTED_ORIGINS = [
     "https://vetbackend.insurecow.com",
 ]
 
+# URL shortener configuration
+ENABLE_URL_SHORTENING = config("ENABLE_URL_SHORTENING", default=True, cast=bool)
+# Use Bitly by default; provide BITLY_TOKEN (or legacy BITLY_API_KEY) for production shortening
+URL_SHORTENER_PROVIDER = config("URL_SHORTENER_PROVIDER", default="bitly")
+BITLY_TOKEN = config("BITLY_TOKEN", default=config("BITLY_API_KEY", default=""))
+
 # Application definition
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -89,7 +95,7 @@ DATABASES = {
         'NAME': config('DB_NAME', default='agrivet_db'),
         'USER': config('DB_USER', default='agrivet_user'),
         'PASSWORD': config('DB_PASSWORD', default='StrongPassword123!'),
-        'HOST': config('DB_HOST', default='194.238.22.134'),  #194.238.22.134
+        'HOST': config('DB_HOST', default='194.238.22.134'),
         'PORT': config('DB_PORT', default='5432'),
     }
     
