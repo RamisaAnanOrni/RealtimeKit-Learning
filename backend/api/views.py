@@ -15,6 +15,7 @@ from .serializers import (
     FarmerRequestSerializer,
     MeetingSerializer,
     GuestRequestCreateSerializer,
+    RegisterSerializer,
 )
 from .permissions import IsFarmer, IsVet, IsAdminUserRole
 from .services.cloudflare import CloudflareRealtimeKit
@@ -171,15 +172,11 @@ class FarmerSignupView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        phone = str(request.data.get('phone', '')).strip()
-        full_name = str(request.data.get('fullName', '')).strip()
-        password = str(request.data.get('password', ''))
-        if not phone or not full_name or len(password) < 6:
-            return Response({'detail': 'Name, phone, and a password of at least 6 characters are required.'}, status=status.HTTP_400_BAD_REQUEST)
-        if User.objects.filter(username=phone).exists() or User.objects.filter(phone=phone).exists():
-            return Response({'detail': 'An account with this phone number already exists.'}, status=status.HTTP_409_CONFLICT)
-        user = User.objects.create_user(username=phone, phone=phone, first_name=full_name, role=User.Role.FARMER, password=password)
-        return Response({'success': True, 'message': 'Account created successfully.'}, status=status.HTTP_201_CREATED)
+        serializer = RegisterSerializer(data=request.data)
+        if serializer.is_valid():
+            user = serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
 
 # ------------------

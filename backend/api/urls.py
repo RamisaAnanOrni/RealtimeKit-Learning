@@ -18,6 +18,7 @@ urlpatterns = [
     path('meeting/create/', create_meeting, name='create_meeting'),
     path('auth/login/', CustomLoginView.as_view(), name='api_login'),
     path('auth/signup/', FarmerSignupView.as_view(), name='api_signup'),
+    path('auth/register/', FarmerSignupView.as_view(), name='api_register'),  # Alias for signup
     path('farmer/request/create/', CreateFarmerRequestView.as_view(), name='farmer_request_create'),
     path('farmer/request/list/', FarmerRequestsListView.as_view(), name='farmer_request_list'),
     path('farmer/dashboard/', FarmerDashboardView.as_view(), name='farmer_dashboard'),

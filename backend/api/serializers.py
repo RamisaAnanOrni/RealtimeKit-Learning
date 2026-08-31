@@ -7,6 +7,62 @@ class UserSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'username', 'email', 'phone', 'role']
 
+class RegisterSerializer(serializers.Serializer):
+    """Serializer for user registration with role selection."""
+    
+    phone = serializers.CharField(required=True, max_length=15)
+    fullName = serializers.CharField(required=True, max_length=150, source='full_name')
+    password = serializers.CharField(required=True, min_length=6, write_only=True)
+    role = serializers.ChoiceField(
+        choices=[User.Role.VET, User.Role.FARMER],
+        required=False,
+        default=User.Role.FARMER
+    )
+    
+    def validate_phone(self, value):
+        """Validate phone is not already registered."""
+        phone = str(value).strip()
+        if User.objects.filter(username=phone).exists() or User.objects.filter(phone=phone).exists():
+            raise serializers.ValidationError("An account with this phone number already exists.")
+        return phone
+    
+    def validate_fullName(self, value):
+        """Validate full name is not empty."""
+        if not value.strip():
+            raise serializers.ValidationError("Full name is required.")
+        return value.strip()
+    
+    def validate_role(self, value):
+        """Normalize and validate role."""
+        if value:
+            normalized_role = str(value).strip().upper()
+            if normalized_role not in [User.Role.VET, User.Role.FARMER]:
+                raise serializers.ValidationError(
+                    f"Invalid role. Must be one of: {', '.join([User.Role.VET, User.Role.FARMER])}"
+                )
+            return normalized_role
+        return User.Role.FARMER
+    
+    def create(self, validated_data):
+        """Create a new user with the specified role."""
+        user = User.objects.create_user(
+            username=validated_data['phone'],
+            phone=validated_data['phone'],
+            first_name=validated_data['full_name'],
+            role=validated_data['role'],  # Explicitly set role from validated data
+            password=validated_data['password'],
+        )
+        return user
+    
+    def to_representation(self, instance):
+        """Return user details after registration."""
+        return {
+            'success': True,
+            'message': 'Account created successfully.',
+            'username': instance.username,
+            'role': instance.role,
+        }
+
 class VetSerializer(serializers.ModelSerializer):
     user = UserSerializer(read_only=True)
 
