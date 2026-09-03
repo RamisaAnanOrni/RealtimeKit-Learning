@@ -8,9 +8,12 @@ from .views import (
     FarmerDashboardView,
     FarmerRequestsListView,
     VetAssignedRequestsView,
+    VetResponseView,
     MeetingDetailByUUIDView,
     guest_request_create,
     guest_request_status,
+    CreateConsultationRequestView,
+    ConsultationStatusView,
 )
 
 urlpatterns = [
@@ -22,7 +25,10 @@ urlpatterns = [
     path('farmer/request/create/', CreateFarmerRequestView.as_view(), name='farmer_request_create'),
     path('farmer/request/list/', FarmerRequestsListView.as_view(), name='farmer_request_list'),
     path('farmer/dashboard/', FarmerDashboardView.as_view(), name='farmer_dashboard'),
+    path('farmer/consultation/create/', CreateConsultationRequestView.as_view(), name='consultation_create'),
+    path('farmer/consultation/<int:request_id>/status/', ConsultationStatusView.as_view(), name='consultation_status'),
     path('vet/request/list/', VetAssignedRequestsView.as_view(), name='vet_request_list'),
+    path('vet/requests/<int:request_id>/respond/', VetResponseView.as_view(), name='vet_respond'),
     path('internal/meeting/<uuid:meeting_uuid>/', MeetingDetailByUUIDView.as_view(), name='meeting_detail_uuid'),
     path('guest/request/', guest_request_create, name='guest_request_create'),
     path('guest/request/<int:request_id>/', guest_request_status, name='guest_request_status'),

@@ -106,10 +106,13 @@ class FarmerRequestAdmin(admin.ModelAdmin):
             kwargs["queryset"] = User.objects.filter(role=User.Role.FARMER)
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
-    actions = ['generate_meeting_action']
+    actions = ['generate_meeting_action', 'assign_vet_with_links']
 
     @admin.action(description="Generate Meeting & Video Call Links")
     def generate_meeting_action(self, request, queryset):
+        from django.utils import timezone
+        from datetime import timedelta
+        
         for req in queryset:
             if not req.assigned_vet:
                 self.message_user(
@@ -154,7 +157,12 @@ class FarmerRequestAdmin(admin.ModelAdmin):
                     status=Meeting.Status.CREATED,
                 )
 
-                req.status = FarmerRequest.Status.MEETING_CREATED
+                # Update FarmerRequest with links and expiration
+                req.farmer_link = f_link
+                req.vet_link = v_link
+                req.status = FarmerRequest.Status.ASSIGNED
+                req.link_expiry = timezone.now() + timedelta(minutes=10)
+                req.expires_at = timezone.now() + timedelta(minutes=10)
                 req.save()
 
                 req.assigned_vet.status = Vet.Status.BUSY
@@ -175,6 +183,43 @@ class FarmerRequestAdmin(admin.ModelAdmin):
                 traceback.print_exc()
                 print("=" * 50 + "\n")
 
+                self.message_user(
+                    request,
+                    f"Error processing Request #{req.id}: {str(e)}",
+                    messages.ERROR,
+                )
+    
+    @admin.action(description="Assign Vet & Set Expiration (10 mins)")
+    def assign_vet_with_links(self, request, queryset):
+        """Admin action to assign vets with manual link input capability."""
+        from django.utils import timezone
+        from datetime import timedelta
+        
+        for req in queryset:
+            if not req.assigned_vet:
+                self.message_user(
+                    request,
+                    f"No Vet assigned for Request #{req.id}! Please assign a Vet first.",
+                    messages.ERROR,
+                )
+                continue
+            
+            try:
+                # Set status to ASSIGNED and set expiration
+                req.status = FarmerRequest.Status.ASSIGNED
+                req.expires_at = timezone.now() + timedelta(minutes=10)
+                req.link_expiry = timezone.now() + timedelta(minutes=10)
+                req.save()
+                
+                req.assigned_vet.status = Vet.Status.BUSY
+                req.assigned_vet.save()
+                
+                self.message_user(
+                    request,
+                    f"Request #{req.id} assigned to {req.assigned_vet}. Links expire in 10 minutes.",
+                    messages.SUCCESS,
+                )
+            except Exception as e:
                 self.message_user(
                     request,
                     f"Error processing Request #{req.id}: {str(e)}",

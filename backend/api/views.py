@@ -16,6 +16,7 @@ from .serializers import (
     MeetingSerializer,
     GuestRequestCreateSerializer,
     RegisterSerializer,
+    ConsultationRequestCreateSerializer,
 )
 from .permissions import IsFarmer, IsVet, IsAdminUserRole
 from .services.cloudflare import CloudflareRealtimeKit
@@ -244,6 +245,135 @@ class VetAssignedRequestsView(generics.ListAPIView):
         if hasattr(self.request.user, 'vet_profile'):
             return FarmerRequest.objects.filter(assigned_vet=self.request.user.vet_profile).order_by('-created_at')
         return FarmerRequest.objects.none()
+
+
+class VetResponseView(APIView):
+    """Vet accepts or declines a consultation request.
+    
+    POST /api/vet/requests/<id>/respond/
+    Body: {"action": "accept" | "decline"}
+    
+    - accept: Updates status to ACCEPTED and returns vet_link
+    - decline: Updates status to DECLINED
+    """
+    permission_classes = [IsAuthenticated, IsVet]
+    
+    def post(self, request, request_id):
+        try:
+            # Get the consultation request assigned to this vet
+            vet_profile = request.user.vet_profile
+            consultation = FarmerRequest.objects.select_related('meeting').get(
+                id=request_id,
+                assigned_vet=vet_profile
+            )
+        except FarmerRequest.DoesNotExist:
+            return Response(
+                {'detail': 'Consultation request not found or not assigned to you.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        from .serializers import VetResponseSerializer
+        serializer = VetResponseSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        action = serializer.validated_data['action']
+        
+        if action == 'accept':
+            consultation.status = FarmerRequest.Status.ACCEPTED
+            consultation.save()
+            
+            # Return vet link for immediate access
+            vet_link = consultation.vet_link
+            if not vet_link and hasattr(consultation, 'meeting'):
+                vet_link = consultation.meeting.vet_link
+            
+            return Response({
+                'status': 'ACCEPTED',
+                'message': 'Consultation accepted. Join the video call.',
+                'vet_link': vet_link,
+                'consultation_id': consultation.id,
+            }, status=status.HTTP_200_OK)
+        
+        elif action == 'decline':
+            consultation.status = FarmerRequest.Status.DECLINED
+            consultation.save()
+            
+            return Response({
+                'status': 'DECLINED',
+                'message': 'Consultation request declined.',
+                'consultation_id': consultation.id,
+            }, status=status.HTTP_200_OK)
+
+
+# ----------------------------------------
+# FARMER CONSULTATION ENDPOINTS
+# ----------------------------------------
+class CreateConsultationRequestView(generics.CreateAPIView):
+    """Create a new tele-health consultation request."""
+    serializer_class = ConsultationRequestCreateSerializer
+    permission_classes = [IsAuthenticated, IsFarmer]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        
+        # Return the full consultation request details
+        consultation = serializer.save()
+        response_serializer = FarmerRequestSerializer(consultation)
+        return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+
+    def perform_create(self, serializer):
+        serializer.save(farmer=self.request.user, source=FarmerRequest.Source.PORTAL)
+
+
+class ConsultationStatusView(APIView):
+    """Get consultation request status (for polling). 
+    
+    Returns consultation details including:
+    - Status (PENDING, LINK_GENERATED, EXPIRED, COMPLETED)
+    - Meeting link (when available)
+    - Link expiry timestamp
+    - Assigned vet information
+    """
+    permission_classes = [IsAuthenticated, IsFarmer]
+
+    def get(self, request, request_id):
+        try:
+            consultation = FarmerRequest.objects.select_related(
+                'assigned_vet__user'
+            ).get(id=request_id, farmer=request.user)
+        except FarmerRequest.DoesNotExist:
+            return Response(
+                {'detail': 'Consultation request not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        # Get meeting link if it exists
+        meeting_link = None
+        link_expiry = None
+        try:
+            meeting = consultation.meeting
+            meeting_link = meeting.farmer_link
+            link_expiry = consultation.link_expiry
+        except Meeting.DoesNotExist:
+            pass
+
+        serializer = FarmerRequestSerializer(consultation)
+        data = serializer.data
+
+        # Add computed fields for frontend
+        data['meeting_link'] = meeting_link
+        data['link_expiry'] = link_expiry.isoformat() if link_expiry else None
+        data['is_expired'] = consultation.is_link_expired()
+        data['can_join'] = (
+            meeting_link is not None and 
+            not consultation.is_link_expired() and 
+            consultation.status == FarmerRequest.Status.MEETING_CREATED
+        )
+
+        return Response(data)
 
 
 # ------------------------------------

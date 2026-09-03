@@ -73,11 +73,70 @@ class VetSerializer(serializers.ModelSerializer):
 class FarmerRequestSerializer(serializers.ModelSerializer):
     farmer = UserSerializer(read_only=True)
     assigned_vet = VetSerializer(read_only=True)
+    meeting_link = serializers.SerializerMethodField()
+    link_expires_at = serializers.SerializerMethodField()
+    is_link_expired = serializers.SerializerMethodField()
 
     class Meta:
         model = FarmerRequest
-        fields = ['id', 'farmer', 'problem', 'description', 'cow_image', 'status', 'assigned_vet', 'created_at']
-        read_only_fields = ['id', 'farmer', 'status', 'assigned_vet', 'created_at']
+        fields = [
+            'id', 'farmer', 'animal_type', 'breed', 'gender', 'age', 
+            'health_problem', 'problem', 'description', 'cow_image', 
+            'status', 'assigned_vet', 'meeting_link', 'link_expires_at', 
+            'is_link_expired', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'farmer', 'status', 'assigned_vet', 'created_at', 'updated_at', 'meeting_link']
+    
+    def get_meeting_link(self, obj):
+        """Get farmer's meeting link from related Meeting object."""
+        if hasattr(obj, 'meeting') and obj.meeting:
+            return obj.meeting.farmer_link
+        return None
+    
+    def get_link_expires_at(self, obj):
+        """Return the link expiry timestamp."""
+        if obj.link_expiry:
+            return obj.link_expiry.isoformat()
+        return None
+    
+    def get_is_link_expired(self, obj):
+        """Check if the link has expired."""
+        return obj.is_link_expired()
+
+
+class ConsultationRequestCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating new consultation requests with detailed animal info."""
+    
+    class Meta:
+        model = FarmerRequest
+        fields = [
+            'animal_type', 'breed', 'gender', 'age', 'health_problem', 'cow_image'
+        ]
+    
+    def validate_animal_type(self, value):
+        """Validate animal type is one of the allowed choices."""
+        if value and value not in dict(FarmerRequest.AnimalType.choices).keys():
+            raise serializers.ValidationError("Invalid animal type.")
+        return value
+    
+    def validate_gender(self, value):
+        """Validate gender is one of the allowed choices."""
+        if value and value not in dict(FarmerRequest.Gender.choices).keys():
+            raise serializers.ValidationError("Invalid gender.")
+        return value
+    
+    def validate_health_problem(self, value):
+        """Validate health problem description is not empty."""
+        if value and not value.strip():
+            raise serializers.ValidationError("Health problem description is required.")
+        return value.strip() if value else value
+    
+    def create(self, validated_data):
+        """Create a new consultation request."""
+        request = self.context.get('request')
+        validated_data['farmer'] = request.user
+        validated_data['source'] = FarmerRequest.Source.PORTAL
+        return FarmerRequest.objects.create(**validated_data)
 
 class MeetingSerializer(serializers.ModelSerializer):
     vet = VetSerializer(read_only=True)
@@ -108,3 +167,14 @@ class GuestRequestCreateSerializer(serializers.Serializer):
         if not value.strip():
             raise serializers.ValidationError("Problem description is required.")
         return value.strip()
+
+class VetResponseSerializer(serializers.Serializer):
+    """Serializer for Vet to accept or decline a consultation request."""
+    
+    action = serializers.ChoiceField(choices=['accept', 'decline'], required=True)
+    
+    def validate_action(self, value):
+        """Validate action is accept or decline."""
+        if value not in ['accept', 'decline']:
+            raise serializers.ValidationError("Action must be 'accept' or 'decline'.")
+        return value
