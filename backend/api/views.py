@@ -1,3 +1,5 @@
+import uuid
+
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -21,6 +23,58 @@ from .serializers import (
 from .permissions import IsFarmer, IsVet, IsAdminUserRole
 from .services.cloudflare import CloudflareRealtimeKit
 from .services.guest import find_or_create_farmer_by_phone
+
+
+def _request_lookup_kwarg(request_id):
+    """Map a URL request_id to a FarmerRequest lookup kwarg.
+
+    FarmerRequest.id is a BigAutoField (integer), but the frontend may send the
+    1:1 Meeting UUID string as the public request handle. Validate the value
+    shape before querying so the ORM raises DoesNotExist (clean 404) instead of
+    a ValueError (500) on type-mismatched lookups.
+    """
+    try:
+        int(str(request_id).strip())
+        return {"id": request_id}
+    except (ValueError, TypeError):
+        pass
+
+    try:
+        return {"meeting__id": uuid.UUID(str(request_id))}
+    except (ValueError, TypeError, AttributeError):
+        raise FarmerRequest.DoesNotExist
+
+
+def _deny_unless_farmer(request):
+    """Return a 403 Response unless the user is an authenticated FARMER.
+
+    DRF's IsAuthenticated/IsFarmer permissions would surface a 401 or a
+    generic message before the handler runs, so request-creation endpoints
+    perform this single source-of-truth check in the handler to guarantee
+    a clear 403 for unauthenticated AND non-farmer (e.g. VET) callers.
+    """
+    if not request.user.is_authenticated:
+        return Response(
+            {
+                "detail": (
+                    "Authentication required. Please sign in with a farmer"
+                    " account to create a request."
+                )
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    if str(request.user.role).upper() != User.Role.FARMER:
+        return Response(
+            {
+                "detail": (
+                    "Only farmer accounts can create requests. Please sign in"
+                    " with a farmer account."
+                )
+            },
+            status=status.HTTP_403_FORBIDDEN,
+        )
+    return None
+
 
 @xframe_options_exempt
 def farmer_join(request):
@@ -63,7 +117,9 @@ def create_meeting(request):
 
         if request_id:
             try:
-                farmer_request = FarmerRequest.objects.get(id=request_id)
+                farmer_request = FarmerRequest.objects.get(
+                    **_request_lookup_kwarg(request_id)
+                )
                 farmer_user = farmer_request.farmer
                 vet_profile = farmer_request.assigned_vet
             except FarmerRequest.DoesNotExist:
@@ -185,7 +241,13 @@ class FarmerSignupView(APIView):
 # ----------------
 class CreateFarmerRequestView(generics.CreateAPIView):
     serializer_class = FarmerRequestSerializer
-    permission_classes = [IsAuthenticated, IsFarmer]
+    permission_classes = [AllowAny]
+
+    def create(self, request, *args, **kwargs):
+        denied = _deny_unless_farmer(request)
+        if denied is not None:
+            return denied
+        return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         serializer.save(farmer=self.request.user)
@@ -247,6 +309,89 @@ class VetAssignedRequestsView(generics.ListAPIView):
         return FarmerRequest.objects.none()
 
 
+class VetDashboardView(APIView):
+    """Return dashboard statistics for the logged-in Vet.
+
+    GET /api/vet/dashboard/
+
+    Response:
+    - total_consultations: completed consultations count
+    - pending_requests: PENDING/ASSIGNED/ACCEPTED count
+    - today_consultations: meetings created today
+    - weekly_consultations: records created in the last 7 days
+    - pending_requests_list: serialized pending requests with join links
+    """
+    permission_classes = [IsAuthenticated, IsVet]
+
+    def get(self, request):
+        from django.utils import timezone
+        from datetime import timedelta
+
+        try:
+            vet_profile = request.user.vet_profile
+        except Vet.DoesNotExist:
+            return Response(
+                {'detail': 'Vet profile not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        assigned_requests = FarmerRequest.objects.filter(
+            assigned_vet=vet_profile
+        ).select_related('farmer', 'meeting', 'assigned_vet__user').order_by('-created_at')
+
+        pending_statuses = [
+            FarmerRequest.Status.PENDING,
+            FarmerRequest.Status.ASSIGNED,
+            FarmerRequest.Status.ACCEPTED,
+        ]
+        pending = assigned_requests.filter(status__in=pending_statuses)
+        completed = assigned_requests.filter(status=FarmerRequest.Status.COMPLETED)
+
+        now = timezone.now()
+        today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        week_start = today_start - timedelta(days=7)
+
+        today_meetings = Meeting.objects.filter(
+            vet=vet_profile,
+            created_at__gte=today_start,
+        ).count()
+
+        pending_serializer = FarmerRequestSerializer(pending[:20], many=True)
+
+        data = {
+            'total_consultations': completed.count(),
+            'pending_requests': pending.count(),
+            'today_consultations': today_meetings,
+            'weekly_consultations': assigned_requests.filter(
+                created_at__gte=week_start
+            ).count(),
+            'pending_requests_list': pending_serializer.data,
+        }
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class VetAssignedMeetingsView(generics.ListAPIView):
+    """Return video meetings assigned to the logged-in Vet.
+
+    GET /api/vet/meetings/
+
+    Each item maps to the frontend's Meeting shape (vet_link, farmer_link,
+    request details, farmer info, status, etc.).
+    """
+    serializer_class = MeetingSerializer
+    permission_classes = [IsAuthenticated, IsVet]
+
+    def get_queryset(self):
+        try:
+            vet_profile = self.request.user.vet_profile
+        except Vet.DoesNotExist:
+            return Meeting.objects.none()
+
+        return Meeting.objects.filter(
+            vet=vet_profile
+        ).select_related('request', 'farmer', 'vet__user').order_by('-created_at')
+
+
 class VetResponseView(APIView):
     """Vet accepts or declines a consultation request.
     
@@ -263,8 +408,8 @@ class VetResponseView(APIView):
             # Get the consultation request assigned to this vet
             vet_profile = request.user.vet_profile
             consultation = FarmerRequest.objects.select_related('meeting').get(
-                id=request_id,
-                assigned_vet=vet_profile
+                assigned_vet=vet_profile,
+                **_request_lookup_kwarg(request_id),
             )
         except FarmerRequest.DoesNotExist:
             return Response(
@@ -312,9 +457,13 @@ class VetResponseView(APIView):
 class CreateConsultationRequestView(generics.CreateAPIView):
     """Create a new tele-health consultation request."""
     serializer_class = ConsultationRequestCreateSerializer
-    permission_classes = [IsAuthenticated, IsFarmer]
+    permission_classes = [AllowAny]
 
     def create(self, request, *args, **kwargs):
+        denied = _deny_unless_farmer(request)
+        if denied is not None:
+            return denied
+
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         self.perform_create(serializer)
@@ -343,7 +492,10 @@ class ConsultationStatusView(APIView):
         try:
             consultation = FarmerRequest.objects.select_related(
                 'assigned_vet__user'
-            ).get(id=request_id, farmer=request.user)
+            ).get(
+                farmer=request.user,
+                **_request_lookup_kwarg(request_id),
+            )
         except FarmerRequest.DoesNotExist:
             return Response(
                 {'detail': 'Consultation request not found.'},
@@ -460,7 +612,7 @@ def guest_request_status(request, request_id):
     try:
         farmer_request = FarmerRequest.objects.select_related(
             "assigned_vet__user"
-        ).get(id=request_id)
+        ).get(**_request_lookup_kwarg(request_id))
     except FarmerRequest.DoesNotExist:
         return Response(
             {"detail": "Request Not Found"}, status=status.HTTP_404_NOT_FOUND

@@ -106,6 +106,22 @@ class FarmerRequestAdmin(admin.ModelAdmin):
             kwargs["queryset"] = User.objects.filter(role=User.Role.FARMER)
         return super().formfield_for_foreignkey(db_field, request, **kwargs)
 
+    def save_model(self, request, obj, form, change):
+        """Auto-transition a request to call-ready when the vet link is set.
+
+        The admin may paste the vet's video-call join link into vet_link; once
+        it holds a value the request is joinable from the vet dashboard, so it
+        is promoted out of PENDING/ASSIGNED.
+        """
+        super().save_model(request, obj, form, change)
+        if obj.vet_link and obj.status in (
+            FarmerRequest.Status.PENDING,
+            FarmerRequest.Status.ASSIGNED,
+        ):
+            FarmerRequest.objects.filter(pk=obj.pk).update(
+                status=FarmerRequest.Status.ACCEPTED
+            )
+
     actions = ['generate_meeting_action', 'assign_vet_with_links']
 
     @admin.action(description="Generate Meeting & Video Call Links")
