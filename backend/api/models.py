@@ -1,7 +1,7 @@
 import uuid
 from django.contrib.auth.models import AbstractUser, BaseUserManager
 from django.db import models
-from django.db.models.signals import post_save
+from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
 
@@ -202,3 +202,46 @@ def create_user_profile(sender, instance, created, **kwargs):
         # If created user is a FARMER, auto-create RewardAccount
         elif role_upper == User.Role.FARMER or role_upper == "FARMER":
             RewardAccount.objects.get_or_create(farmer=instance)
+
+
+# ============================================================================
+# DECOUPLING GUARD: MEETING <=> FARMER REQUEST
+#
+# A FarmerRequest must never linger in an active state while its Meeting has
+# been completed (ENDED) or removed (deleted). These signals close the related
+# request automatically so stale cards never surface on the Vet Dashboard.
+# ============================================================================
+
+# Statuses which are still "open" from the request's point of view. Once a
+# request reaches a terminal state (COMPLETED/DECLINED/CANCELLED) it is left
+# untouched, even if a signal fires again.
+_REQUEST_OPEN_STATUSES = [
+    FarmerRequest.Status.PENDING,
+    FarmerRequest.Status.ASSIGNED,
+    FarmerRequest.Status.ACCEPTED,
+    FarmerRequest.Status.MEETING_CREATED,
+    FarmerRequest.Status.IN_PROGRESS,
+]
+
+
+@receiver(post_save, sender=Meeting)
+def close_request_on_meeting_end(sender, instance, **kwargs):
+    """Mark the related FarmerRequest COMPLETED when its Meeting ends."""
+    if instance.status != Meeting.Status.ENDED:
+        return
+    FarmerRequest.objects.filter(
+        id=instance.request_id,
+        status__in=_REQUEST_OPEN_STATUSES,
+    ).update(status=FarmerRequest.Status.COMPLETED)
+
+
+@receiver(post_delete, sender=Meeting)
+def close_request_on_meeting_delete(sender, instance, **kwargs):
+    """Close the related FarmerRequest if its Meeting is removed."""
+    request_id = getattr(instance, 'request_id', None)
+    if not request_id:
+        return
+    FarmerRequest.objects.filter(
+        id=request_id,
+        status__in=_REQUEST_OPEN_STATUSES,
+    ).update(status=FarmerRequest.Status.COMPLETED)

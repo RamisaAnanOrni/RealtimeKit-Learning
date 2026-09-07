@@ -74,6 +74,7 @@ class FarmerRequestSerializer(serializers.ModelSerializer):
     farmer = UserSerializer(read_only=True)
     assigned_vet = VetSerializer(read_only=True)
     meeting_link = serializers.SerializerMethodField()
+    vet_join_link = serializers.SerializerMethodField()
     link_expires_at = serializers.SerializerMethodField()
     is_link_expired = serializers.SerializerMethodField()
 
@@ -82,15 +83,24 @@ class FarmerRequestSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'farmer', 'animal_type', 'breed', 'gender', 'age', 
             'health_problem', 'problem', 'description', 'cow_image', 
-            'status', 'assigned_vet', 'meeting_link', 'link_expires_at', 
+            'status', 'assigned_vet', 'meeting_link', 'vet_join_link',
+            'link_expires_at', 
             'is_link_expired', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'farmer', 'status', 'assigned_vet', 'created_at', 'updated_at', 'meeting_link']
+        read_only_fields = ['id', 'farmer', 'status', 'assigned_vet', 'created_at', 'updated_at', 'meeting_link', 'vet_join_link']
     
     def get_meeting_link(self, obj):
         """Get farmer's meeting link from related Meeting object."""
         if hasattr(obj, 'meeting') and obj.meeting:
             return obj.meeting.farmer_link
+        return None
+    
+    def get_vet_join_link(self, obj):
+        """Get the vet's meeting link (falls back to the related Meeting)."""
+        if obj.vet_link:
+            return obj.vet_link
+        if hasattr(obj, 'meeting') and obj.meeting and obj.meeting.vet_link:
+            return obj.meeting.vet_link
         return None
     
     def get_link_expires_at(self, obj):

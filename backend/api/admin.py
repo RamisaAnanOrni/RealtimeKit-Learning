@@ -176,7 +176,7 @@ class FarmerRequestAdmin(admin.ModelAdmin):
                 # Update FarmerRequest with links and expiration
                 req.farmer_link = f_link
                 req.vet_link = v_link
-                req.status = FarmerRequest.Status.ASSIGNED
+                req.status = FarmerRequest.Status.MEETING_CREATED
                 req.link_expiry = timezone.now() + timedelta(minutes=10)
                 req.expires_at = timezone.now() + timedelta(minutes=10)
                 req.save()

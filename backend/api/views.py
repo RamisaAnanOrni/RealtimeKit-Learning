@@ -4,11 +4,13 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics
+from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework_simplejwt.tokens import RefreshToken
 
 from django.contrib.auth import authenticate
 from django.conf import settings
+from django.db.models import Q
 from django.shortcuts import render
 from django.views.decorators.clickjacking import xframe_options_exempt
 
@@ -269,16 +271,20 @@ class FarmerDashboardView(APIView):
             for item in Livestock.objects.filter(farmer=request.user)
         }
         requests = FarmerRequest.objects.filter(farmer=request.user).order_by('-created_at')
-        logs = [
-            {
-                'id': f'R-{item.id:03d}',
-                'animal_id': item.problem[:12],
-                'treatment': item.problem,
-                'date': item.created_at.strftime('%b %d, %Y'),
-                'status': item.get_status_display(),
-            }
-            for item in requests[:10]
-        ]
+        try:
+            logs = [
+                {
+                    'id': f'R-{item.id:03d}',
+                    'animal_id': (item.problem or item.health_problem or 'N/A')[:12],
+                    'treatment': item.problem or item.health_problem or 'N/A',
+                    'date': item.created_at.strftime('%b %d, %Y'),
+                    'status': item.get_status_display(),
+                }
+                for item in requests[:10]
+            ]
+        except Exception:
+            # Never let a malformed request/log row 500 the whole dashboard.
+            logs = []
         return Response({
             'user': {
                 'id': request.user.id,
@@ -304,9 +310,33 @@ class VetAssignedRequestsView(generics.ListAPIView):
     permission_classes = [IsAuthenticated, IsVet]
 
     def get_queryset(self):
-        if hasattr(self.request.user, 'vet_profile'):
-            return FarmerRequest.objects.filter(assigned_vet=self.request.user.vet_profile).order_by('-created_at')
-        return FarmerRequest.objects.none()
+        """Return requests that are ready to act on (admin-activated).
+
+        A request is only visible once an Admin has created an active Meeting
+        for it (status becomes MEETING_CREATED after link generation, or
+        ASSIGNED after assignment). Brand-new PORTAL submissions (PENDING,
+        no Meeting yet) are therefore hidden from the Vet Dashboard.
+
+        - status IN (MEETING_CREATED, ASSIGNED): actionable -> Accept/Decline.
+        - status IN (ACCEPTED, IN_PROGRESS): kept visible so the accepted
+          card keeps its "Join Video Call" button until the call is ended.
+        - meeting__isnull=False and meeting still live (CREATED/STARTED):
+          requests whose Meeting was removed or completed are excluded,
+          along with COMPLETED / DECLINED / CANCELLED / EXPIRED rows.
+        """
+        if not hasattr(self.request.user, 'vet_profile'):
+            return FarmerRequest.objects.none()
+
+        vet_profile = self.request.user.vet_profile
+        actionable_statuses = ['MEETING_CREATED', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS']
+        active_meeting_statuses = [Meeting.Status.CREATED, Meeting.Status.STARTED]
+        return FarmerRequest.objects.filter(
+            status__in=actionable_statuses,
+            meeting__isnull=False,
+            meeting__status__in=active_meeting_statuses,
+        ).filter(
+            Q(assigned_vet=vet_profile) | Q(meeting__vet=vet_profile)
+        ).order_by('-created_at', '-id')
 
 
 class VetDashboardView(APIView):
@@ -337,14 +367,23 @@ class VetDashboardView(APIView):
 
         assigned_requests = FarmerRequest.objects.filter(
             assigned_vet=vet_profile
-        ).select_related('farmer', 'meeting', 'assigned_vet__user').order_by('-created_at')
+        ).select_related('farmer', 'meeting', 'assigned_vet__user').order_by('-created_at', '-id')
 
-        pending_statuses = [
-            FarmerRequest.Status.PENDING,
-            FarmerRequest.Status.ASSIGNED,
-            FarmerRequest.Status.ACCEPTED,
-        ]
-        pending = assigned_requests.filter(status__in=pending_statuses)
+        # A request only counts as pending once an Admin has created an active
+        # Meeting for it (MEETING_CREATED / ASSIGNED). Brand-new PENDING portal
+        # submissions are hidden until then. ACCEPTED / IN_PROGRESS stay in the
+        # pending list so an already-accepted call keeps its Join button.
+        # Requests whose associated Meeting was removed or completed (ENDED),
+        # and rows in finished states, are strictly excluded.
+        actionable_statuses = ['MEETING_CREATED', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS']
+        active_meeting_statuses = [Meeting.Status.CREATED, Meeting.Status.STARTED]
+        pending = FarmerRequest.objects.filter(
+            status__in=actionable_statuses,
+            meeting__isnull=False,
+            meeting__status__in=active_meeting_statuses,
+        ).filter(
+            Q(assigned_vet=vet_profile) | Q(meeting__vet=vet_profile)
+        ).select_related('farmer', 'meeting', 'assigned_vet__user').order_by('-created_at', '-id')
         completed = assigned_requests.filter(status=FarmerRequest.Status.COMPLETED)
 
         now = timezone.now()
@@ -387,9 +426,18 @@ class VetAssignedMeetingsView(generics.ListAPIView):
         except Vet.DoesNotExist:
             return Meeting.objects.none()
 
+        # Only expose meetings tied to an ACTIVE request, and only while the
+        # meeting itself is still live. Brand-new PENDING requests (no meeting)
+        # are hidden here by design. Completed, declined and cancelled
+        # consultations are filtered out so they never linger as "incoming
+        # request" cards on the Vet Dashboard.
+        active_request_statuses = ['MEETING_CREATED', 'ASSIGNED', 'ACCEPTED', 'IN_PROGRESS']
+        active_meeting_statuses = [Meeting.Status.CREATED, Meeting.Status.STARTED]
         return Meeting.objects.filter(
-            vet=vet_profile
-        ).select_related('request', 'farmer', 'vet__user').order_by('-created_at')
+            vet=vet_profile,
+            status__in=active_meeting_statuses,
+            request__status__in=active_request_statuses,
+        ).select_related('request', 'farmer', 'vet__user').order_by('-created_at', '-id')
 
 
 class VetResponseView(APIView):
@@ -400,15 +448,22 @@ class VetResponseView(APIView):
     
     - accept: Updates status to ACCEPTED and returns vet_link
     - decline: Updates status to DECLINED
+
+    Parser classes are explicit so JSON bodies (from the frontend) and
+    multipart/form-data (from tooling/dashboards) both parse reliably.
     """
     permission_classes = [IsAuthenticated, IsVet]
+    parser_classes = [JSONParser, MultiPartParser]
     
     def post(self, request, request_id):
         try:
-            # Get the consultation request assigned to this vet
+            # Requests only reach the dashboard after an Admin generates a
+            # Meeting (status MEETING_CREATED / ASSIGNED). A vet may act on a
+            # request when it has an active Meeting for them, or when it is
+            # directly assigned to them.
             vet_profile = request.user.vet_profile
             consultation = FarmerRequest.objects.select_related('meeting').get(
-                assigned_vet=vet_profile,
+                Q(assigned_vet=vet_profile) | Q(meeting__vet=vet_profile),
                 **_request_lookup_kwarg(request_id),
             )
         except FarmerRequest.DoesNotExist:
@@ -420,12 +475,24 @@ class VetResponseView(APIView):
         from .serializers import VetResponseSerializer
         serializer = VetResponseSerializer(data=request.data)
         if not serializer.is_valid():
+            # Safely handle a missing/empty body instead of 415/500.
+            if not request.data:
+                return Response(
+                    {
+                        'detail': (
+                            'A JSON body with an "action" field is required'
+                            ' (accept or decline).'
+                        )
+                    },
+                    status=status.HTTP_400_BAD_REQUEST
+                )
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
         
         action = serializer.validated_data['action']
         
         if action == 'accept':
             consultation.status = FarmerRequest.Status.ACCEPTED
+            consultation.assigned_vet = vet_profile  # Claim the request
             consultation.save()
             
             # Return vet link for immediate access
@@ -449,6 +516,199 @@ class VetResponseView(APIView):
                 'message': 'Consultation request declined.',
                 'consultation_id': consultation.id,
             }, status=status.HTTP_200_OK)
+
+
+class CompleteConsultationView(APIView):
+    """Mark a video consultation as completed/ended.
+
+    POST /api/vet/requests/<request_id>/complete/
+
+    Transitions the FarmerRequest to COMPLETED and its 1:1 Meeting to ENDED,
+    so both the Vet and Farmer dashboards stop showing the join button and
+    instead render the consultation as finished.
+    """
+    permission_classes = [IsAuthenticated, IsVet]
+
+    def post(self, request, request_id):
+        try:
+            vet_profile = request.user.vet_profile
+        except Vet.DoesNotExist:
+            return Response(
+                {'detail': 'Vet profile not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        try:
+            consultation = FarmerRequest.objects.select_related('meeting', 'assigned_vet').get(
+                assigned_vet=vet_profile,
+                **_request_lookup_kwarg(request_id),
+            )
+        except FarmerRequest.DoesNotExist:
+            return Response(
+                {'detail': 'Consultation request not found or not assigned to you.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        _complete_consultation(consultation)
+
+        return Response({
+            'status': 'COMPLETED',
+            'message': 'Consultation marked as completed.',
+            'consultation_id': consultation.id,
+        }, status=status.HTTP_200_OK)
+
+
+class CompleteConsultationByParticipantView(APIView):
+    """Mark a consultation completed from either side of the call.
+
+    POST /api/consultations/<request_id>/complete/
+
+    Authorization: the request's OWNER (farmer) or the ASSIGNED vet may
+    complete it. Both the FarmerRequest and its 1:1 Meeting are transitioned
+    to COMPLETED / ENDED so the request disappears from the Vet Dashboard's
+    "Incoming Farmer Requests" and shows COMPLETED in the Farmer Care History.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, request_id):
+        try:
+            consultation = FarmerRequest.objects.select_related('meeting', 'assigned_vet').get(
+                **_request_lookup_kwarg(request_id),
+            )
+        except FarmerRequest.DoesNotExist:
+            return Response(
+                {'detail': 'Consultation request not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        is_owner = consultation.farmer_id == request.user.id
+        is_assigned_vet = (
+            consultation.assigned_vet_id is not None
+            and request.user.id == consultation.assigned_vet.user_id
+        )
+        if not (is_owner or is_assigned_vet):
+            return Response(
+                {'detail': 'You are not part of this consultation.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        _complete_consultation(consultation)
+
+        return Response({
+            'status': 'COMPLETED',
+            'message': 'Consultation marked as completed.',
+            'consultation_id': consultation.id,
+        }, status=status.HTTP_200_OK)
+
+
+class FarmerJoinMeetingView(APIView):
+    """Farmer signals they have entered the video room.
+
+    POST /api/consultations/<request_id>/join/
+
+    Transition: MEETING_CREATED/ASSIGNED -> ACCEPTED, and the Meeting is
+    marked STARTED. Once ACCEPTED/IN_PROGRESS the join button remains visible
+    to BOTH the farmer and the vet, so a refresh or reconnect never loses the
+    link. Re-joins on an already-accepted/in-progress consultation are
+    idempotent (200, status unchanged).
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request, request_id):
+        try:
+            consultation = FarmerRequest.objects.select_related('meeting').get(
+                **_request_lookup_kwarg(request_id),
+            )
+        except FarmerRequest.DoesNotExist:
+            return Response(
+                {'detail': 'Consultation request not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        if consultation.farmer_id != request.user.id:
+            return Response(
+                {'detail': 'You are not part of this consultation.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+
+        if consultation.status in (
+            FarmerRequest.Status.COMPLETED,
+            FarmerRequest.Status.DECLINED,
+            FarmerRequest.Status.CANCELLED,
+        ):
+            return Response(
+                {'detail': 'This consultation has already ended.'},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        if consultation.status not in (
+            FarmerRequest.Status.ASSIGNED,
+            FarmerRequest.Status.MEETING_CREATED,
+            FarmerRequest.Status.ACCEPTED,
+            FarmerRequest.Status.IN_PROGRESS,
+        ):
+            return Response(
+                {'detail': 'The meeting link is not available yet.'},
+                status=status.HTTP_409_CONFLICT
+            )
+
+        consultation.status = FarmerRequest.Status.ACCEPTED
+        consultation.save(update_fields=['status', 'updated_at'])
+
+        if (
+            hasattr(consultation, 'meeting')
+            and consultation.meeting.status == Meeting.Status.CREATED
+        ):
+            consultation.meeting.status = Meeting.Status.STARTED
+            consultation.meeting.save(update_fields=['status'])
+
+        return Response({
+            'status': consultation.status,
+            'message': 'You have joined the video consultation.',
+            'consultation_id': consultation.id,
+        }, status=status.HTTP_200_OK)
+
+
+def _complete_consultation(consultation):
+    """Shared transition: mark a FarmerRequest + its Meeting COMPLETED/ENDED."""
+    consultation.status = FarmerRequest.Status.COMPLETED
+    consultation.save(update_fields=['status', 'updated_at'])
+
+    if hasattr(consultation, 'meeting'):
+        consultation.meeting.status = Meeting.Status.ENDED
+        consultation.meeting.save(update_fields=['status'])
+
+    # Free the vet up so new requests can be assigned.
+    if consultation.assigned_vet and consultation.assigned_vet.status != Vet.Status.OFFLINE:
+        consultation.assigned_vet.status = Vet.Status.AVAILABLE
+        consultation.assigned_vet.save(update_fields=['status'])
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def logout_view(request):
+    """Log the user out.
+
+    POST /api/auth/logout/
+
+    Always returns a clean 200 OK. If a refresh token is supplied and the
+    SimpleJWT token_blacklist app is installed, the refresh token is rotated
+    out / blacklisted; otherwise we simply drop the client-side session. The
+    server treats this as best-effort token invalidation.
+    """
+    refresh = request.data.get('refresh') if request.data else None
+    if refresh:
+        try:
+            token = RefreshToken(refresh)
+            token.blacklist()
+        except Exception:
+            # Blacklist is best-effort (app not installed / invalid token).
+            pass
+
+    return Response(
+        {'detail': 'Successfully logged out.'},
+        status=status.HTTP_200_OK
+    )
 
 
 # ----------------------------------------
@@ -502,27 +762,40 @@ class ConsultationStatusView(APIView):
                 status=status.HTTP_404_NOT_FOUND
             )
 
-        # Get meeting link if it exists
+        # Farmer's join link must survive every non-terminal state: regardless
+        # of whether the Vet has already accepted/joined or the Farmer has
+        # rejoined, the link stays live while the Meeting itself is active. It
+        # is only hidden once the request reaches a terminal status (COMPLETED
+        # / DECLINED / CANCELLED) or the Meeting is ENDED.
         meeting_link = None
         link_expiry = None
+        meeting_active = False
         try:
             meeting = consultation.meeting
             meeting_link = meeting.farmer_link
             link_expiry = consultation.link_expiry
+            meeting_active = meeting.status != Meeting.Status.ENDED
         except Meeting.DoesNotExist:
             pass
 
         serializer = FarmerRequestSerializer(consultation)
         data = serializer.data
 
-        # Add computed fields for frontend
+        terminal_statuses = [
+            FarmerRequest.Status.COMPLETED,
+            FarmerRequest.Status.DECLINED,
+            FarmerRequest.Status.CANCELLED,
+        ]
         data['meeting_link'] = meeting_link
         data['link_expiry'] = link_expiry.isoformat() if link_expiry else None
         data['is_expired'] = consultation.is_link_expired()
+        # Join link available as long as the request is NOT terminal and the
+        # meeting is still active with a generated Cloudflare link.
         data['can_join'] = (
-            meeting_link is not None and 
-            not consultation.is_link_expired() and 
-            consultation.status == FarmerRequest.Status.MEETING_CREATED
+            meeting_link is not None
+            and not consultation.is_link_expired()
+            and meeting_active
+            and consultation.status not in terminal_statuses
         )
 
         return Response(data)
