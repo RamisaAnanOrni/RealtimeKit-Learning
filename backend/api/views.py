@@ -1,4 +1,13 @@
+import logging
 import uuid
+
+from django.contrib.auth import authenticate
+from django.conf import settings
+from django.db import IntegrityError
+from django.db.models import Q
+from django.shortcuts import render
+from django.utils import timezone
+from django.views.decorators.clickjacking import xframe_options_exempt
 
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.views import APIView
@@ -6,13 +15,8 @@ from rest_framework.response import Response
 from rest_framework import status, generics
 from rest_framework.parsers import JSONParser, MultiPartParser
 from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import RefreshToken
-
-from django.contrib.auth import authenticate
-from django.conf import settings
-from django.db.models import Q
-from django.shortcuts import render
-from django.views.decorators.clickjacking import xframe_options_exempt
 
 from .models import FarmerRequest, Livestock, Meeting, RewardAccount, User, Vet
 from .serializers import (
@@ -25,6 +29,9 @@ from .serializers import (
 from .permissions import IsFarmer, IsVet, IsAdminUserRole
 from .services.cloudflare import CloudflareRealtimeKit
 from .services.guest import find_or_create_farmer_by_phone
+
+
+logger = logging.getLogger(__name__)
 
 
 def _request_lookup_kwarg(request_id):
@@ -831,47 +838,99 @@ def guest_request_create(request):
     Finds or creates the farmer, then creates a PENDING request. If the farmer
     already has an open (PENDING/ASSIGNED) request it is returned instead of
     creating a duplicate. Never calls Cloudflare and never creates a Meeting.
+
+    The handler is fully exception-guarded: every failure mode (validation,
+    duplicate phone race, DB constraint) surfaces as a 4xx with an exact error
+    message instead of an unhandled 500.
     """
-    serializer = GuestRequestCreateSerializer(data=request.data)
-    serializer.is_valid(raise_exception=True)
-    data = serializer.validated_data
+    try:
+        serializer = GuestRequestCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
 
-    farmer = find_or_create_farmer_by_phone(data["phone"])
+        # Creates (or reuses) the guest farmer User. A non-farmer phone (e.g. a
+        # registered vet/admin number) raises a 400 ValidationError here.
+        farmer = _get_or_create_guest_farmer(data["phone"])
 
-    open_request = (
-        FarmerRequest.objects.filter(
-            farmer=farmer,
-            status__in=[
-                FarmerRequest.Status.PENDING,
-                FarmerRequest.Status.ASSIGNED,
-            ],
+        open_request = (
+            FarmerRequest.objects.filter(
+                farmer=farmer,
+                status__in=[
+                    FarmerRequest.Status.PENDING,
+                    FarmerRequest.Status.ASSIGNED,
+                ],
+            )
+            .order_by("-created_at")
+            .first()
         )
-        .order_by("-created_at")
-        .first()
-    )
-    if open_request:
+        if open_request:
+            return Response({
+                "success": True,
+                "request_id": open_request.id,
+                "status": open_request.status,
+                "message": "You already have an open request. Returning the existing one.",
+            })
+
+        # Fallback defaults for the optional fields: guests only ever submit
+        # phone/problem/description, so provide safe values for everything else
+        # instead of leaving the row half-populated.
+        farmer_request = FarmerRequest.objects.create(
+            farmer=farmer,
+            problem=data["problem"],
+            description=data.get("description", ""),
+            animal_type=data.get("animal_type") or FarmerRequest.AnimalType.UNKNOWN,
+            breed=data.get("breed") or "N/A",
+            gender=data.get("gender") or "",
+            age=data.get("age") or "",
+            status=FarmerRequest.Status.PENDING,
+            assigned_vet=None,
+            source=FarmerRequest.Source.GUEST,
+            updated_at=timezone.now(),  # Ensure updated_at is populated
+        )
+
         return Response({
             "success": True,
-            "request_id": open_request.id,
-            "status": open_request.status,
-            "message": "You already have an open request. Returning the existing one.",
+            "request_id": farmer_request.id,
+            "status": farmer_request.status,
+            "message": "Request submitted successfully. A veterinarian will be assigned shortly.",
         })
+    except ValidationError as exc:
+        # Serializer failures (bad/oversized fields) plus the guest service's
+        # "invalid phone" / "phone belongs to a vet" errors.
+        return Response(
+            exc.detail if isinstance(exc.detail, dict) else {"detail": exc.detail},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except IntegrityError:
+        # Lost a race against another request creating the same guest user
+        # (phone/username uniqueness). Log it and reply 400; the client can
+        # simply retry — the retry will fetch the now-existing farmer.
+        logger.exception("Concurrent guest request creation for phone=%s", data["phone"])
+        return Response(
+            {"detail": "This request could not be processed right now. Please try again."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+    except Exception as exc:
+        # Safety net: never surface an unhandled 500. Log the traceback for
+        # ops, return a precise 400 with the underlying error to the caller.
+        logger.exception("Guest request creation failed unexpectedly")
+        return Response(
+            {"detail": "Failed to submit request: {}".format(exc)},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
 
-    farmer_request = FarmerRequest.objects.create(
-        farmer=farmer,
-        problem=data["problem"],
-        description=data.get("description", ""),
-        status=FarmerRequest.Status.PENDING,
-        assigned_vet=None,
-        source=FarmerRequest.Source.GUEST,
-    )
 
-    return Response({
-        "success": True,
-        "request_id": farmer_request.id,
-        "status": farmer_request.status,
-        "message": "Request submitted successfully. A veterinarian will be assigned shortly.",
-    })
+def _get_or_create_guest_farmer(phone):
+    """Wrap the guest-user lookup so a create race returns the winner's row."""
+    try:
+        return find_or_create_farmer_by_phone(phone)
+    except IntegrityError:
+        # Another in-flight request created this user between our get() and
+        # create(). Re-fetch and reuse it (role check still applies).
+        user = User.objects.filter(phone=phone).first()
+        if user is not None and user.role == User.Role.FARMER:
+            return user
+        raise
 
 
 @api_view(["GET"])

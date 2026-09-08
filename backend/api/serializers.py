@@ -44,14 +44,22 @@ class RegisterSerializer(serializers.Serializer):
         return User.Role.FARMER
     
     def create(self, validated_data):
-        """Create a new user with the specified role."""
-        user = User.objects.create_user(
+        """Create a new user with the specified role.
+
+        is_active is set explicitly so newly registered users can log in
+        immediately, and the password is hashed via set_password() so
+        authenticate() matches during login (a plaintext-saved password or an
+        inactive user are the two classic causes of 401 Invalid Credentials).
+        """
+        user = User(
             username=validated_data['phone'],
             phone=validated_data['phone'],
             first_name=validated_data['full_name'],
             role=validated_data['role'],  # Explicitly set role from validated data
-            password=validated_data['password'],
+            is_active=True,
         )
+        user.set_password(validated_data['password'])
+        user.save()
         return user
     
     def to_representation(self, instance):
@@ -160,7 +168,11 @@ class GuestRequestCreateSerializer(serializers.Serializer):
     """Validate the payload for a guest request submission."""
 
     phone = serializers.CharField(required=True)
-    problem = serializers.CharField(required=True)
+    # Must match FarmerRequest.problem's CharField(max_length=555). The guest
+    # page concatenates problem + description into this single string, so an
+    # unbounded CharField here lets an oversized payload pass validation and
+    # then explode at the DB layer with DataError -> HTTP 500.
+    problem = serializers.CharField(required=True, max_length=555)
     description = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate_phone(self, value):

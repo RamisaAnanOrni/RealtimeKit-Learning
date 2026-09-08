@@ -111,6 +111,7 @@ class FarmerRequest(models.Model):
         SHEEP = "SHEEP", "Sheep"
         POULTRY = "POULTRY", "Poultry"
         OTHER = "OTHER", "Other"
+        UNKNOWN = "UNKNOWN", "Unknown"
 
     class Gender(models.TextChoices):
         MALE = "MALE", "Male"
