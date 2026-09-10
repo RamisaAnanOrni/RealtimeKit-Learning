@@ -18,6 +18,12 @@ class RegisterSerializer(serializers.Serializer):
         required=False,
         default=User.Role.FARMER
     )
+    # Vet professional credentials (only persisted when role == VET)
+    nid = serializers.CharField(required=False, allow_blank=True, default="", max_length=30)
+    university = serializers.CharField(required=False, allow_blank=True, default="", max_length=255)
+    cgpa = serializers.CharField(required=False, allow_blank=True, default="", max_length=10)
+    licenseId = serializers.CharField(required=False, allow_blank=True, default="", max_length=100, source='license_id')
+    yearsOfExperience = serializers.IntegerField(required=False, default=0, min_value=0, max_value=100, source='years_of_experience')
     
     def validate_phone(self, value):
         """Validate phone is not already registered."""
@@ -46,13 +52,14 @@ class RegisterSerializer(serializers.Serializer):
     def create(self, validated_data):
         """Create a new user with the specified role.
 
-        is_active is set explicitly so newly registered users can log in
+        Phone is the primary auth identifier (USERNAME_FIELD='phone'), so it is
+        stored as ``phone``. The display ``username`` is set from the submitted
+        full name. is_active is set explicitly so new users can log in
         immediately, and the password is hashed via set_password() so
-        authenticate() matches during login (a plaintext-saved password or an
-        inactive user are the two classic causes of 401 Invalid Credentials).
+        authenticate() matches during login.
         """
         user = User(
-            username=validated_data['phone'],
+            username=validated_data['full_name'],
             phone=validated_data['phone'],
             first_name=validated_data['full_name'],
             role=validated_data['role'],  # Explicitly set role from validated data
@@ -60,6 +67,20 @@ class RegisterSerializer(serializers.Serializer):
         )
         user.set_password(validated_data['password'])
         user.save()
+
+        # Persist the vet's professional credentials when signing up as a VET.
+        # The post_save signal already auto-creates the Vet profile with
+        # defaults, so the profile is fetched here and enriched.
+        if validated_data['role'] == User.Role.VET:
+            vet_profile = getattr(user, 'vet_profile', None)
+            if vet_profile is not None:
+                vet_profile.nid = str(validated_data.get('nid', '') or '').strip()
+                vet_profile.university = str(validated_data.get('university', '') or '').strip()
+                vet_profile.cgpa = str(validated_data.get('cgpa', '') or '').strip()
+                vet_profile.license_id = str(validated_data.get('license_id', '') or '').strip()
+                vet_profile.experience = int(validated_data.get('years_of_experience', 0) or 0)
+                vet_profile.save()
+
         return user
     
     def to_representation(self, instance):
@@ -76,7 +97,7 @@ class VetSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Vet
-        fields = ['id', 'user', 'speciality', 'experience', 'status']
+        fields = ['id', 'user', 'speciality', 'experience', 'nid', 'university', 'cgpa', 'license_id', 'status']
 
 class FarmerRequestSerializer(serializers.ModelSerializer):
     farmer = UserSerializer(read_only=True)

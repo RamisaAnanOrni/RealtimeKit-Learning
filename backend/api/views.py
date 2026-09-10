@@ -218,10 +218,13 @@ class CustomLoginView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
-        username = request.data.get('username')
+        # Phone is USERNAME_FIELD, so credentials arrive as 'phone'. A
+        # 'username' key is still accepted for backward compatibility with the
+        # current frontend payload (which sends the phone under 'username').
+        phone = request.data.get('phone') or request.data.get('username')
         password = request.data.get('password')
 
-        user = authenticate(username=username, password=password)
+        user = authenticate(username=phone, password=password)
 
         if user:
             refresh = RefreshToken.for_user(user)
@@ -229,7 +232,8 @@ class CustomLoginView(APIView):
                 'access': str(refresh.access_token),
                 'refresh': str(refresh),
                 'role': user.role,
-                'username': user.username
+                'username': user.username,
+                'phone': user.phone,
             })
         return Response({'detail': 'Invalid Credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -306,6 +310,26 @@ class FarmerDashboardView(APIView):
             'appointments': requests.filter(status__in=[FarmerRequest.Status.ASSIGNED, FarmerRequest.Status.MEETING_CREATED, FarmerRequest.Status.IN_PROGRESS]).count(),
             'rewards': RewardAccount.objects.filter(farmer=request.user).values_list('points', flat=True).first() or 0,
             'logs': logs,
+        })
+
+
+class FarmerProfileView(APIView):
+    """Return the logged-in farmer's profile/account credentials.
+
+    GET /api/farmer/profile/
+
+    Response:
+    - id, full_name, phone, username, role
+    """
+    permission_classes = [IsAuthenticated, IsFarmer]
+
+    def get(self, request):
+        return Response({
+            'id': request.user.id,
+            'full_name': request.user.get_full_name() or request.user.username,
+            'phone': request.user.phone,
+            'username': request.user.username,
+            'role': request.user.role,
         })
 
 
@@ -412,6 +436,43 @@ class VetDashboardView(APIView):
                 created_at__gte=week_start
             ).count(),
             'pending_requests_list': pending_serializer.data,
+        }
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class VetProfileView(APIView):
+    """Return the logged-in vet's signup/profile credentials.
+
+    GET /api/vet/profile/
+
+    Response:
+    - full_name:  the vet's full name
+    - phone:      the vet's phone number (auth identifier)
+    - nid:        National ID number
+    - university: name of academic institution
+    - cgpa:       academic CGPA
+    - license_id: professional license ID
+    - experience: years of experience
+    """
+    permission_classes = [IsAuthenticated, IsVet]
+
+    def get(self, request):
+        try:
+            vet_profile = request.user.vet_profile
+        except Vet.DoesNotExist:
+            return Response(
+                {'detail': 'Vet profile not found.'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+
+        data = {
+            'full_name': request.user.get_full_name() or request.user.username,
+            'phone': request.user.phone,
+            'nid': vet_profile.nid,
+            'university': vet_profile.university,
+            'cgpa': vet_profile.cgpa,
+            'license_id': vet_profile.license_id,
+            'experience': vet_profile.experience,
         }
         return Response(data, status=status.HTTP_200_OK)
 

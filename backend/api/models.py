@@ -5,14 +5,16 @@ from django.db.models.signals import post_delete, post_save
 from django.dispatch import receiver
 
 
-# Custom Manager to handle 'ADMIN' role on createsuperuser
+# Custom Manager to handle 'ADMIN' role on createsuperuser.
+# Phone is the authentication identifier (USERNAME_FIELD), so creation is
+# phone-first; username is kept as optional display metadata.
 class CustomUserManager(BaseUserManager):
-    def create_user(self, username, email=None, password=None, **extra_fields):
+    def create_user(self, phone, email=None, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', False)
         extra_fields.setdefault('is_superuser', False)
-        return self._create_user(username, email, password, **extra_fields)
+        return self._create_user(phone, email, password, **extra_fields)
 
-    def create_superuser(self, username, email=None, password=None, **extra_fields):
+    def create_superuser(self, phone, email=None, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         # Automatically set role to ADMIN for superusers
@@ -23,13 +25,19 @@ class CustomUserManager(BaseUserManager):
         if extra_fields.get('is_superuser') is not True:
             raise ValueError('Superuser must have is_superuser=True.')
 
-        return self._create_user(username, email, password, **extra_fields)
+        return self._create_user(phone, email, password, **extra_fields)
 
-    def _create_user(self, username, email, password, **extra_fields):
-        if not username:
-            raise ValueError('The given username must be set')
+    def _create_user(self, phone, email, password, **extra_fields):
+        if not phone:
+            raise ValueError('The given phone must be set')
         email = self.normalize_email(email)
-        user = self.model(username=username, email=email, **extra_fields)
+        # Guests pass a generated handle (guest_<phone>); registered users get
+        # their full name set by the serializer. Either way username is just a
+        # display label now — never the login identifier.
+        username = extra_fields.pop('username', None)
+        user = self.model(phone=phone, email=email, **extra_fields)
+        if username:
+            user.username = username
         user.set_password(password)
         user.save(using=self._db)
         return user
@@ -42,13 +50,20 @@ class User(AbstractUser):
         VET = "VET", "Vet"
         FARMER = "FARMER", "Farmer"
 
+    # Phone is the primary authentication identifier; login and token
+    # creation resolve users through USERNAME_FIELD = 'phone'.
+    USERNAME_FIELD = 'phone'
+
     role = models.CharField(max_length=10, choices=Role.choices, default=Role.FARMER)
+    # username is display-only metadata (full name / guest handle). It is NOT
+    # unique because it is no longer an identifier.
+    username = models.CharField(max_length=150, unique=False)
     phone = models.CharField(max_length=15, unique=True, null=True, blank=True)
 
     objects = CustomUserManager()
 
     def __str__(self):
-        return f"{self.username} ({self.role})"
+        return f"{self.phone or self.username} ({self.role})"
 
 
 class Livestock(models.Model):
@@ -80,6 +95,10 @@ class Vet(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="vet_profile")
     speciality = models.CharField(max_length=255, default="General Veterinary")
     experience = models.IntegerField(default=0)  # years
+    nid = models.CharField(max_length=30, blank=True, default="")
+    university = models.CharField(max_length=255, blank=True, default="")
+    cgpa = models.CharField(max_length=10, blank=True, default="")
+    license_id = models.CharField(max_length=100, blank=True, default="")
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.AVAILABLE)
 
     def __str__(self):
